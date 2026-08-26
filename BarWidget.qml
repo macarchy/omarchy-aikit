@@ -15,7 +15,7 @@ Item {
   id: root
 
   property var bar
-  property string moduleName: "phmatray.aikit"
+  property string moduleName: "atypical.aikit"
   property var settings
 
   property string text: "󱓞"

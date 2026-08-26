@@ -57,7 +57,7 @@ def resolve(text):
     return text.replace("@AIKIT_BIN@", binary).replace("@AIKIT_BAR_SCRIPT@", str(script))
 
 
-PLUGIN_ID = "phmatray.aikit"
+PLUGIN_ID = "atypical.aikit"
 
 
 def merge_shell():
@@ -70,7 +70,7 @@ def merge_shell():
     before = json.dumps(right, sort_keys=True)
     right[:] = [w for w in right if w.get("id") != "aikit"]
 
-    # Le plugin QML (omarchy plugin add phmatray.aikit) rend le même widget en
+    # Le plugin QML (omarchy plugin add atypical.aikit) rend le même widget en
     # mieux : s'il est là, on ne pose pas le doublon « command ».
     if any(w.get("id") == PLUGIN_ID for w in right) or (
             HOME / ".config/omarchy/plugins" / PLUGIN_ID / "manifest.json").exists():

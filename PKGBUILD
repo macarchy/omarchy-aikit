@@ -6,7 +6,7 @@ pkgrel=1
 install=aikit.install
 pkgdesc="Desktop launcher for the AI Migration Kit skills, backed by a local GitHub mirror"
 arch=('any')
-url="https://github.com/phmatray/aikit"
+url="https://github.com/Atypical-Consulting/omarchy-aikit"
 license=('MIT')
 depends=('bash' 'git' 'jq' 'python' 'sqlite' 'tmux' 'github-cli')
 optdepends=(
@@ -16,7 +16,7 @@ optdepends=(
 makedepends=('git')
 provides=("$_pkgname")
 conflicts=("$_pkgname")
-source=("$_pkgname::git+https://github.com/phmatray/aikit.git")
+source=("$_pkgname::git+https://github.com/Atypical-Consulting/omarchy-aikit.git")
 sha256sums=('SKIP')
 
 pkgver() {

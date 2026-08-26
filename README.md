@@ -54,13 +54,13 @@ omarchy pkg aur add aikit-git      # ou : yay -S aikit-git
 aikit doctor                       # prérequis
 aikit setup                        # entrées de menu Omarchy
 systemctl --user enable --now aikit-sync.timer
-omarchy plugin add https://github.com/phmatray/omarchy-aikit.git --enable   # widget de barre
+omarchy plugin add https://github.com/Atypical-Consulting/omarchy-aikit.git --enable   # widget de barre
 ```
 
 **Depuis les sources** (n'importe quelle distribution, ou pour bricoler) :
 
 ```bash
-git clone https://github.com/phmatray/aikit && cd aikit
+git clone https://github.com/Atypical-Consulting/omarchy-aikit && cd aikit
 ./install.sh                       # liens symboliques, timer systemd, entrées Omarchy
 aikit-selftest                     # 32 vérifications, sans réseau ni fenêtre
 ```

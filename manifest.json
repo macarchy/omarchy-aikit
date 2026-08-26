@@ -1,11 +1,13 @@
 {
   "schemaVersion": 1,
-  "id": "phmatray.aikit",
+  "id": "atypical.aikit",
   "name": "AI Kit",
   "version": "0.1.0",
-  "author": "Philippe Matray",
+  "author": "Atypical Consulting",
   "description": "Bar widget for AI Kit: running Claude sessions, fleet progress, and sync health",
-  "kinds": ["bar-widget"],
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },

@@ -8,7 +8,7 @@ post_install() {
     systemctl --user enable --now aikit-sync.timer démarrer la synchronisation
 
   Widget de barre Omarchy (plus riche que l'entrée « command ») :
-    omarchy plugin add https://github.com/phmatray/omarchy-aikit.git --enable
+    omarchy plugin add https://github.com/Atypical-Consulting/omarchy-aikit.git --enable
 
 NOTE
 }
