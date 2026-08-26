@@ -1,5 +1,12 @@
 # AI Kit
 
+[![ci](https://github.com/Atypical-Consulting/omarchy-aikit/actions/workflows/ci.yml/badge.svg)](https://github.com/Atypical-Consulting/omarchy-aikit/actions/workflows/ci.yml)
+[![Omarchy plugin](https://img.shields.io/badge/omarchy-plugin-7aa2f7)](https://omarchyplugins.com/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+**Your backlog, one keystroke away.** Point at a repository, pick a skill, walk
+away — and watch the bar tell you when a fleet of agents has landed the PRs.
+
 Run [AI Migration Kit](https://github.com/phmatray/ai-migration-kit) skills for
 Claude Code from the [Omarchy](https://omarchy.org/) desktop: pick a repository,
 pick a skill, and the session starts in a tmux terminal. Menus read a local
