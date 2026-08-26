@@ -5,13 +5,18 @@ pour [Omarchy](https://omarchy.org/) : on choisit un dépôt, puis une skill, et
 session Claude démarre dans un terminal tmux. Les menus lisent une base SQLite
 locale tenue à jour en tâche de fond — aucun appel réseau dans le parcours.
 
-```
-SUPER + CTRL + M   ou   clic sur 󱓞 dans la barre
-  → dépôt (243 clones, triables, avec étoiles / issues / PR)
-  → skill (compteurs du dépôt : issues éligibles, PR en CI rouge…)
-  → paramètre (issue ou PR choisie dans une liste, nombre d'agents…)
-  → tmux + claude "/ai-migration-kit:<skill> …"
-```
+![Le widget dans la barre](docs/bar.png)
+
+`SUPER + CTRL + M`, ou un clic sur 󱓞 dans la barre : on choisit un dépôt — triable,
+avec étoiles, issues et PR ouvertes — puis une skill, dont le sous-titre porte
+l'état réel du dépôt.
+
+![Sélecteur de dépôt et menu des skills](docs/repos.png)
+![Menu des skills](docs/skills.png)
+
+Le paramètre suit (l'issue ou la PR se choisit dans une liste, jamais un numéro à
+retrouver), et la session part dans un terminal tmux :
+`claude "/ai-migration-kit:<skill> …"`.
 
 ## File de travail
 
@@ -19,13 +24,7 @@ SUPER + CTRL + M   ou   clic sur 󱓞 dans la barre
 « sur quoi je bosse ? » **sans choisir de dépôt** : une seule liste, tous dépôts
 confondus, dans l'ordre où ça compte.
 
-```
-  #433 Per-exam accommodation opt-in…     CI failing · Atypical-Consulting/Lectio · 2 months ago
-  #217 fix(loader): standalone project…   review requested · Atypical-Consulting/RoselineMCP · 4h ago
-ᛦ #218 fix(website): per-kind tool counts your PR · Atypical-Consulting/RoselineMCP · just now
-⊙ #61  Wire the audit marker              assigned to you · phmatray/Koine · 2d ago
-✔ #271 Lever 4 never priced the top tier  planned, ready to build · phmatray/ai-migration-kit · 2d ago
-```
+![La file de travail](docs/work.png)
 
 Choisir une ligne ouvre directement la bonne session dans le bon clone :
 `merge-pr` pour une PR à toi, `/code-review` pour une review demandée,
