@@ -69,10 +69,30 @@ aikit-selftest                     # 32 vérifications, sans réseau ni fenêtre
 (la base et le cache sont conservés). Chaque fichier remplacé est sauvegardé
 avec un horodatage.
 
-Le widget de barre existe en deux formes : le **plugin Quickshell**
-[omarchy-aikit](https://github.com/phmatray/omarchy-aikit) (installé et mis à
-jour par `omarchy plugin`), ou une entrée `type: command` posée par `aikit setup`
-quand le plugin n'est pas là. `aikit setup` ne pose jamais les deux.
+## Le widget de barre
+
+Ce dépôt **est aussi un plugin Omarchy** : `manifest.json` et `BarWidget.qml`
+sont à la racine, là où `omarchy plugin add` les attend.
+
+```
+󱓞          rien en cours
+󱓞 2 · 7✓   deux sessions, sept PR mergées
+󱓞 2 !      une session détachée et silencieuse : un agent attend une décision
+󱓞          la synchronisation est en échec (détail au survol)
+```
+
+| Geste | Action |
+|---|---|
+| clic gauche | choisir un dépôt, puis une skill |
+| clic milieu | la file de travail, tous dépôts confondus |
+| clic droit | reprendre une session en cours |
+
+Le QML ne fait que le rendu : tout vient de la commande `aikit-status`, au format
+JSON Waybar (`{text, tooltip, class}`). Réglages possibles sur l'entrée du widget
+dans `shell.json` : `interval` (10 s), `exec` (`aikit-status`), `launcher` (`aikit`).
+
+Sans le plugin, `aikit setup` pose une entrée `type: command` équivalente — il ne
+pose jamais les deux.
 
 `aikit doctor` vérifie les prérequis un par un et dit quoi installer :
 `gh` authentifié, `tmux`, `jq`, `python3`, `sqlite3`, `git`, `claude`, Omarchy,

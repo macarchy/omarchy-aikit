@@ -21,7 +21,7 @@ jobs:
           done
           python3 -m py_compile bin/aikit-sync share/rows.py omarchy/merge-config.py
 
-      - name: Manifests and strings
+      - name: Strings catalogue
         run: |
           jq -e . share/strings.json > /dev/null
           python3 - <<'PY'
@@ -34,3 +34,36 @@ jobs:
 
       - name: Selftest
         run: ./bin/aikit-selftest
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Manifest matches the Omarchy plugin contract
+        run: |
+          jq -e '.schemaVersion == 1' manifest.json > /dev/null
+          for field in id name version kinds entryPoints; do
+            jq -e --arg f "$field" 'has($f)' manifest.json > /dev/null \
+              || { echo "manifest: champ requis manquant: $field"; exit 1; }
+          done
+          jq -e '(.kinds | type) == "array" and (.kinds | length) > 0' manifest.json > /dev/null
+          entry=$(jq -r '.entryPoints.barWidget' manifest.json)
+          case "$entry" in
+            /*|*..*) echo "entryPoint doit être relatif et sans '..': $entry"; exit 1 ;;
+          esac
+          test -f "$entry" || { echo "entryPoint introuvable: $entry"; exit 1; }
+          echo "manifest valide, entryPoint: $entry"
+
+      - name: QML sanity
+        run: |
+          # Pas de moteur QML en CI : on vérifie ce qui casse silencieusement
+          # dans le shell — équilibre des accolades et propriétés du contrat.
+          python3 - <<'PY'
+          src = open("BarWidget.qml").read()
+          assert src.count("{") == src.count("}"), "accolades déséquilibrées"
+          for needed in ("property var bar", "implicitWidth", "implicitHeight"):
+              assert needed in src, f"contrat de widget: '{needed}' manquant"
+          assert "import Quickshell.Io" in src, "Process nécessite Quickshell.Io"
+          print("BarWidget.qml conforme au contrat de widget tiers")
+          PY
