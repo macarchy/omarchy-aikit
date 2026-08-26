@@ -46,17 +46,14 @@ la session est alors marquée *terminée* et ne compte plus comme travail en cou
 
 ## Installation
 
-**Arch / Omarchy — paquet :**
+**Widget de barre** (Omarchy Quattro) :
 
 ```bash
-omarchy pkg aur add aikit-git      # ou : yay -S aikit-git
-aikit doctor                       # prérequis
-aikit setup                        # entrées de menu Omarchy
-systemctl --user enable --now aikit-sync.timer
-omarchy plugin add https://github.com/Atypical-Consulting/omarchy-aikit.git --enable   # widget de barre
+omarchy plugin add https://github.com/Atypical-Consulting/omarchy-aikit.git --enable
 ```
 
-**Depuis les sources** (n'importe quelle distribution, ou pour bricoler) :
+**Le CLI et le service** — depuis les sources pour l'instant, paquet AUR
+(`aikit-git`) en cours de publication :
 
 ```bash
 git clone https://github.com/Atypical-Consulting/omarchy-aikit && cd aikit
