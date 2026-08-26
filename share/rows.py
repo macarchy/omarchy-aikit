@@ -71,6 +71,14 @@ def short(t, n=76):
     return t if len(t) <= n else t[: n - 1] + "…"
 
 
+def emit(rows):
+    """Imprime les lignes triées, en alignant les « #123 » sur la largeur du
+    plus grand numéro de la liste (le \x00 marque l'emplacement à combler)."""
+    width = max((len(str(n)) for _, n, _ in rows), default=1)
+    for _, number, line in sorted(rows, key=lambda r: r[0]):
+        print(line.replace("\x00", " " * (width - len(str(number)))))
+
+
 def tilde(p):
     return "~" + p[len(HOME):] if p.startswith(HOME) else p
 
@@ -109,16 +117,19 @@ def cmd_repos(db, mode="recent"):
         name = os.path.basename(path)
         slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
         nwo = nwo_of(path)
-        bits = []
-        if nwo and nwo in stats:
-            s = stats[nwo]
-            if s["stars"]:
-                bits.append("%s %d" % (G_STAR, s["stars"]))
-            if s["open_issues"]:
-                bits.append("%s %d" % (G_ISSUE, s["open_issues"]))
-            if s["open_prs"]:
-                bits.append("%s %d" % (G_PR, s["open_prs"]))
-        bits.append(tilde(path))
+        st = stats.get(nwo) if nwo else None
+        # colonnes de largeur fixe : la police du menu est à chasse fixe, donc
+        # les compteurs s'alignent d'une ligne à l'autre et se lisent en diagonale
+        counters = "".join(
+            ("%s %3d  " % (glyph, value)) if value else " " * 7
+            for glyph, value in ((G_STAR, st["stars"] if st else 0),
+                                 (G_ISSUE, st["open_issues"] if st else 0),
+                                 (G_PR, st["open_prs"] if st else 0)))
+        bits = [counters.rstrip() or " "]
+        # le propriétaire lève l'ambiguïté entre deux dépôts de même nom
+        bits.append(nwo.split("/")[0] if nwo else tilde(str(pathlib.Path(path).parent)))
+        if st and st["pushed_at"]:
+            bits.append(ago(st["pushed_at"]))
         glyph = G_LIVE if slug in live else (G_GITHUB if nwo else G_FOLDER)
         st = stats.get(nwo) if nwo else None
         key = {
@@ -190,12 +201,11 @@ def cmd_issues(db, nwo):
         if area:
             bits.append(area.split(": ", 1)[-1])
         bits.append(ago(r["updated_at"]))
-        rows.append(((0 if r["planned"] else 1, EFFORT.get(effort, 9), -r["number"]),
-                     "%d\t%s\t#%d %s\t%s" % (r["number"], G_PLANNED if r["planned"] else G_ISSUE,
-                                             r["number"], short(r["title"]),
-                                             " · ".join(b for b in bits if b))))
-    for _, row in sorted(rows):
-        print(row)
+        rows.append(((0 if r["planned"] else 1, EFFORT.get(effort, 9), -r["number"]), r["number"],
+                     "%d\t%s\t#%d\x00 %s\t%s" % (r["number"], G_PLANNED if r["planned"] else G_ISSUE,
+                                                 r["number"], short(r["title"]),
+                                                 " · ".join(b for b in bits if b))))
+    emit(rows)
 
 
 def cmd_prs(db, nwo):
@@ -210,11 +220,10 @@ def cmd_prs(db, nwo):
         if r["conflicting"]:
             bits.append(T("row_conflicts"))
         bits.append(ago(r["updated_at"]))
-        rows.append(((1 if r["draft"] else 0, rank.get(ci, 3), -r["number"]),
-                     "%d\t%s\t#%d %s\t%s" % (r["number"], G_CI[ci], r["number"], short(r["title"]),
-                                             " · ".join(b for b in bits if b))))
-    for _, row in sorted(rows):
-        print(row)
+        rows.append(((1 if r["draft"] else 0, rank.get(ci, 3), -r["number"]), r["number"],
+                     "%d\t%s\t#%d\x00 %s\t%s" % (r["number"], G_CI[ci], r["number"], short(r["title"]),
+                                                 " · ".join(b for b in bits if b))))
+    emit(rows)
 
 
 G_REVIEW = "\uf06e"        # 👁 review demandée
@@ -238,15 +247,14 @@ def cmd_inbox(db):
         if (nwo, number) in seen:          # une PR en échec ne s'affiche qu'une fois
             return
         seen.add((nwo, number))
-        bits = [T("kind_" + kind)]
+        bits = [nwo, T("kind_" + kind)]
         if draft:
             bits.append(T("row_draft"))
-        bits.append(nwo)
         bits.append(ago(updated))
-        rows.append(((KIND_RANK[kind], updated and -1 or 0, nwo, -number),
+        rows.append(((KIND_RANK[kind], nwo, -number), number,
                      "%s|%s|%d|%s\t%s\t%s\t%s" % (
                          kind, nwo, number, paths.get(nwo, ""),
-                         KIND_GLYPH[kind], "#%d %s" % (number, short(title, 68)),
+                         KIND_GLYPH[kind], "#%d\x00 %s" % (number, short(title, 68)),
                          " · ".join(b for b in bits if b))))
 
     for kind in ("failing", "review", "mine", "assigned"):
@@ -259,8 +267,7 @@ def cmd_inbox(db):
         if set(json.loads(r["labels"])) & {"effort: small", "effort: medium"}:
             push("planned", r["nwo"], r["number"], r["title"], 0, r["updated_at"])
 
-    for _, row in sorted(rows):
-        print(row)
+    emit(rows)
 
 
 if __name__ == "__main__":

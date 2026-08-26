@@ -234,7 +234,16 @@ def sync_inbox(con):
         return 0
     con.execute("DELETE FROM inbox")
     con.executemany("INSERT OR REPLACE INTO inbox VALUES (?,?,?,?,?,?,?)", rows)
-    meta_set(con, inbox_synced_at=int(time.time()))
+
+    # Tout dépôt où quelque chose m'attend devient suivi : c'est là qu'on a
+    # besoin de l'état CI réel, que la recherche GitHub ne sait pas donner.
+    paths = {r[0]: (r[1] or "") for r in con.execute("SELECT nwo, local_path FROM repos")}
+    now = int(time.time())
+    con.executemany(
+        "INSERT INTO tracked (nwo, path, last_used, synced_at) VALUES (?,?,?,0)"
+        " ON CONFLICT(nwo) DO UPDATE SET last_used=excluded.last_used",
+        [(nwo, paths.get(nwo, ""), now) for nwo in {r[1] for r in rows}])
+    meta_set(con, inbox_synced_at=now)
     return len(rows)
 
 
@@ -283,10 +292,13 @@ def live_sessions():
     return {line[len("aikit-"):] for line in out.stdout.split() if line.startswith("aikit-")}
 
 
-def tracked_repos(con):
-    cutoff = int(time.time()) - TRACK_TTL
-    rows = con.execute("SELECT nwo, path, last_used FROM tracked WHERE last_used >= ?", (cutoff,)).fetchall()
-    return [(nwo, path) for nwo, path, _ in rows]
+def tracked_repos(con, ttl):
+    """Dépôts suivis à rafraîchir : ceux dont l'étage 2 a dépassé son âge."""
+    now = int(time.time())
+    rows = con.execute(
+        "SELECT nwo, path, COALESCE(synced_at, 0) FROM tracked WHERE last_used >= ?",
+        (now - TRACK_TTL,)).fetchall()
+    return [(nwo, path) for nwo, path, synced in rows if now - synced >= ttl]
 
 
 def main():
@@ -298,6 +310,8 @@ def main():
     ap.add_argument("--status", action="store_true", help="état de la base")
     ap.add_argument("--force", action="store_true", help="ignore la fraîcheur de l'étage 1")
     ap.add_argument("--inbox-only", action="store_true", help="étage 3 seulement")
+    ap.add_argument("--repo-ttl", type=int, default=600,
+                    help="âge au-delà duquel l'étage 2 d'un dépôt est refait (défaut 600 s)")
     ap.add_argument("--repos-ttl", type=int, default=1800,
                     help="âge au-delà duquel l'étage 1 est refait (défaut 1800 s)")
     args = ap.parse_args()
@@ -362,7 +376,7 @@ def main():
 
     if not args.repos and not args.inbox_only:
         live = live_sessions()
-        todo = tracked_repos(con)
+        todo = tracked_repos(con, args.repo_ttl)
         # les dépôts avec une session en cours d'abord
         todo.sort(key=lambda t: (t[0].split("/")[1].lower() not in live,))
         for nwo, _ in todo:

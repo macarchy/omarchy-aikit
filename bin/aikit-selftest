@@ -35,6 +35,7 @@ mkrepo "alpha"            "acme/alpha"        "2026-08-26 12:00"
 mkrepo "beta project"     "acme/beta"         "2026-08-25 12:00"   # espace dans le nom
 mkrepo "gamma · delta"    "acme/gamma"        "2026-08-24 12:00"   # le séparateur des sous-titres
 mkrepo "local-only"       -                   "2026-08-23 12:00"   # pas de remote GitHub
+mkrepo "dup/alpha"        "other/alpha"       "2026-08-22 12:00"   # même nom de dossier, autre propriétaire
 
 python3 - "$sandbox/share/aikit.db" "$sandbox/repos" <<'PY'
 import sqlite3, sys, time
@@ -107,9 +108,22 @@ cat > "$sandbox/bin/omarchy-launch-tui" <<'STUB'
 printf 'LAUNCH|%s\n' "$*"
 STUB
 printf '#!/bin/bash\nprintf "WEBAPP|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-webapp"
+printf '#!/bin/bash\nprintf "ATTACH|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-tui"
 printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/notify-send"
 printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/aikit-sync"
-printf '#!/bin/bash\nexit 1\n' > "$sandbox/bin/tmux"          # jamais de session en cours
+# tmux bouchonné : les sessions « vivantes » sont les lignes de $sandbox/sessions
+cat > "$sandbox/bin/tmux" <<'STUB'
+#!/bin/bash
+SESS="${SESSIONS:-/dev/null}"
+case "$1 $2" in
+  "list-sessions -F") grep . "$SESS" 2>/dev/null | cut -d'|' -f1 ;;
+  "has-session -t")   grep -q "^$3|" "$SESS" 2>/dev/null ;;
+  "new-session -s")   printf 'TMUX-NEW|%s\n' "$3" ;;
+  *) exit 0 ;;
+esac
+STUB
+chmod +x "$sandbox/bin/tmux"
+: > "$sandbox/sessions"
 chmod +x "$sandbox"/bin/*
 
 # --- utilitaires ------------------------------------------------------------
@@ -118,7 +132,7 @@ flow() { # flow [--args <arg>] <choix...> -> sortie d'aikit (dont la ligne LAUNC
   while [[ ${1-} == --args ]]; do args+=("$2"); shift 2; done
   printf '%s\n' "$@" > "$sandbox/picks"; rm -f "$sandbox/picks.n"
   PATH="$sandbox/bin:$HOME/.local/bin:$PATH" \
-  PICKS="$sandbox/picks" TRACE="${VERBOSE:+$sandbox/trace}" \
+  PICKS="$sandbox/picks" TRACE="${VERBOSE:+$sandbox/trace}" SESSIONS="$sandbox/sessions" \
   AIKIT_SHARE="$sandbox/share" AIKIT_DB="$sandbox/share/aikit.db" \
   AIKIT_CACHE="$sandbox/cache" AIKIT_ROOTS="$sandbox/repos" AIKIT_LANG=en \
     ${AIKIT_XTRACE:+bash -x} "$HOME/.local/bin/aikit" "${args[@]}" 2>"$sandbox/err"
@@ -135,6 +149,7 @@ check() { # check <intitulé> <attendu> <obtenu>
 }
 
 launched() { sed -n 's/^LAUNCH|.*--exec [^ ]* //p' <<<"$1"; }   # "<dépôt> <prompt>"
+session_of() { sed -n 's/^LAUNCH|.*--exec \([^ ]*\) .*/\1/p' <<<"$1"; }
 
 echo "aikit-selftest — bac à sable : $sandbox"
 echo
@@ -142,22 +157,22 @@ echo
 # --- 1. le chemin du dépôt survit aux caractères pénibles -------------------
 echo "Dépôts"
 out=$(flow "match:beta project" "match:Legacy audit")
-check "nom avec espace" "$sandbox/repos/beta project /ai-migration-kit:migrate-assess " "$(launched "$out")"
+check "nom avec espace" "$sandbox/repos/beta project /ai-migration-kit:migrate-assess" "$(launched "$out")"
 
 out=$(flow "match:gamma" "match:Legacy audit")
-check "nom contenant le séparateur « · »" "$sandbox/repos/gamma · delta /ai-migration-kit:migrate-assess " "$(launched "$out")"
+check "nom contenant le séparateur « · »" "$sandbox/repos/gamma · delta /ai-migration-kit:migrate-assess" "$(launched "$out")"
 
 out=$(flow "match:local-only" "match:Legacy audit")
-check "dépôt sans remote GitHub" "$sandbox/repos/local-only /ai-migration-kit:migrate-assess " "$(launched "$out")"
+check "dépôt sans remote GitHub" "$sandbox/repos/local-only /ai-migration-kit:migrate-assess" "$(launched "$out")"
 
 # --- 2. tri ------------------------------------------------------------------
 echo "Tri"
 out=$(flow "match:Sort:" "match:stars" "index:1" "match:Legacy audit")
-check "tri par étoiles : beta (90) en tête" "$sandbox/repos/beta project /ai-migration-kit:migrate-assess " "$(launched "$out")"
+check "tri par étoiles : beta (90) en tête" "$sandbox/repos/beta project /ai-migration-kit:migrate-assess" "$(launched "$out")"
 check "tri mémorisé" "stars" "$(cat "$sandbox/cache/sort")"
 
 out=$(flow "match:Sort:" "match:open issues" "index:1" "match:Legacy audit")
-check "tri par issues : gamma (40) en tête" "$sandbox/repos/gamma · delta /ai-migration-kit:migrate-assess " "$(launched "$out")"
+check "tri par issues : gamma (40) en tête" "$sandbox/repos/gamma · delta /ai-migration-kit:migrate-assess" "$(launched "$out")"
 printf 'recent\n' > "$sandbox/cache/sort"
 
 # --- 3. le menu des skills rend bien la skill -------------------------------
@@ -188,13 +203,64 @@ out=$(flow --args work "match:#77 #111 fix")
 check "PR en CI rouge → merge-pr dans le bon clone" \
       "$sandbox/repos/alpha /ai-migration-kit:merge-pr 77" "$(launched "$out")"
 
-out=$(flow --args work "match:#5 do the needful")
+out=$(flow --args work "match:do the needful")
 check "issue assignée → implement-issue, autre dépôt, sans redemander le dépôt" \
       "$sandbox/repos/beta project /ai-migration-kit:implement-issue 5" "$(launched "$out")"
 
-out=$(flow --args work "match:#9 no clone here")
+out=$(flow --args work "match:no clone here")
 check "sans clone local → ouverture sur GitHub" \
       "WEBAPP|GitHub https://github.com/acme/remote-only/pull/9" "$(grep '^WEBAPP|' <<<"$out")"
+
+# --- 4 ter. sessions tmux : un dépôt, une session ---------------------------
+echo "Sessions"
+out=$(flow "match:	alpha	" "match:Legacy audit")
+check "session nommée d'après le dépôt distant" "aikit-acme-alpha" "$(session_of "$out")"
+
+out=$(flow "match:· other" "match:Legacy audit")
+check "même nom de dossier, autre propriétaire → autre session" "aikit-other-alpha" "$(session_of "$out")"
+
+printf 'aikit-acme-alpha|1\n' > "$sandbox/sessions"
+out=$(flow "match:	alpha	" "match:Legacy audit")
+check "session déjà prise → nouvelle session, pas un rattachement muet" "aikit-acme-alpha-2" "$(session_of "$out")"
+
+out=$(flow "match:	alpha	" "match:Resume")
+check "« reprendre » vise la session existante, sans en créer" \
+      "ATTACH|--app-id=org.omarchy.aikit tmux attach -t aikit-acme-alpha" "$(grep '^ATTACH|' <<<"$out")"
+: > "$sandbox/sessions"
+
+out=$(flow "match:local-only" "match:Legacy audit")
+check "dépôt sans remote → session dérivée du chemin" "1" \
+      "$(grep -cE '^aikit-local-only-[0-9]+$' <<<"$(session_of "$out")")"
+
+# une session finie (claude rendu, pane encore ouvert) ne doit plus compter
+printf 'aikit-acme-alpha|1\n' > "$sandbox/sessions"
+mkdir -p "$sandbox/cache/done"; echo 0 > "$sandbox/cache/done/aikit-acme-alpha"
+out=$(flow "match:	alpha	" "match:Legacy audit")
+check "session terminée → pas de ligne « reprendre »" "" \
+      "$(grep -o 'Resume the running session' <<<"$out")"
+check "session terminée → la nouvelle session prend un nom libre" "aikit-acme-alpha-2" "$(session_of "$out")"
+rm -rf "$sandbox/cache/done"; : > "$sandbox/sessions"
+
+# --- 4 quater. navigation en arrière ----------------------------------------
+echo "Navigation"
+out=$(flow "match:	alpha	" "cancel" "match:	beta project	" "match:Legacy audit")
+check "Échap au menu des skills → retour au choix du dépôt" \
+      "$sandbox/repos/beta project /ai-migration-kit:migrate-assess" "$(launched "$out")"
+
+out=$(flow "match:	alpha	" "match:Back" "match:	beta project	" "match:Legacy audit")
+check "ligne « Back » → retour au choix du dépôt" \
+      "$sandbox/repos/beta project /ai-migration-kit:migrate-assess" "$(launched "$out")"
+
+out=$(flow "match:	alpha	" "match:Implement an issue" "cancel" "match:Legacy audit")
+check "Échap au choix de l'issue → retour au menu des skills" \
+      "$sandbox/repos/alpha /ai-migration-kit:migrate-assess" "$(launched "$out")"
+
+out=$(flow "match:	alpha	" "match:Implement an issue" "match:Back" "match:Legacy audit")
+check "ligne « Back » dans la liste des issues → menu des skills" \
+      "$sandbox/repos/alpha /ai-migration-kit:migrate-assess" "$(launched "$out")"
+
+out=$(flow "cancel")
+check "Échap au choix du dépôt → on sort" "" "$(launched "$out")"
 
 # --- 5. compteurs -----------------------------------------------------------
 echo "Compteurs"
@@ -215,6 +281,7 @@ used=$( {
     printf 'sort_recent\nsort_pushed\nsort_name\nsort_stars\nsort_issues\nsort_prs\n'
     printf 'no_repo\nno_repo_gh\n'
     printf 'kind_failing\nkind_review\nkind_mine\nkind_assigned\nkind_planned\n'
+    printf 'back_row\nback_hint\nsession_finished\nbar_finished\n'
   } | sort -u )
 
 for lang in en fr; do

@@ -31,6 +31,20 @@ Choisir une ligne ouvre directement la bonne session dans le bon clone :
 `merge-pr` pour une PR à toi, `/code-review` pour une review demandée,
 `implement-issue` pour une issue. Sans clone local, la page GitHub s'ouvre.
 
+## Navigation
+
+`↑` `↓` parcourent la liste, la frappe filtre, `→` ou `Entrée` valident.
+`Échap`, la ligne « Back » ou `←` **reviennent d'un cran** — du choix de l'issue
+au menu des skills, du menu des skills au choix du dépôt — au lieu de tout
+annuler. Depuis le choix du dépôt, `Échap` ferme.
+
+Une session par lancement : deux dépôts qui portent le même nom de dossier chez
+des propriétaires différents (`phmatray/.github` et `Atypical-Consulting/.github`)
+ont des sessions distinctes, et relancer une skill sur un dépôt déjà ouvert crée
+une session neuve plutôt que de rattacher silencieusement la précédente. Quand
+claude a rendu la main, le pane reste ouvert pour que la sortie soit lisible :
+la session est alors marquée *terminée* et ne compte plus comme travail en cours.
+
 ## Installation
 
 ```bash

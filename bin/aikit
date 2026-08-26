@@ -8,7 +8,7 @@
 #   aikit attach             réattache une session aikit en cours
 #   aikit sync               force une synchronisation de la base
 #   aikit --exec <s> <d> <p> interne : ouvre la session tmux
-#   aikit --run <d> <p>      interne : lance claude et notifie à la fin
+#   aikit --run <d> <p> <s>  interne : lance claude et notifie à la fin
 #
 # Les menus ne touchent jamais le réseau : tout vient de la base locale
 # (~/.local/share/aikit/aikit.db) tenue à jour par aikit-sync.timer.
@@ -54,10 +54,42 @@ G_FOLLOWUPS=$''     # ☑  case cochée
 G_ASSESS=$''        # 🔍 loupe
 G_MIGRATE=$'\U000F0450'   # ↻  cycle
 G_SORT=$''          # ⇅  tri
+G_WORK=$'\uF03A'       # ☰  file de travail
+G_DONE=$'\uF00C'       # ✓  session terminée
+G_BACK=$'\uF053'       # ‹  retour
 
 notify() { command -v notify-send >/dev/null && notify-send -a "AI Kit" "$@" || true; }
 die() { notify "$1" "${2-}"; echo "aikit: $1 ${2-}" >&2; exit 1; }
-slug_of() { basename "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-$//'; }
+slugify() { tr '[:upper:]' '[:lower:]' <<<"$1" | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//'; }
+
+# Nom de session : deux dépôts peuvent porter le même nom de dossier chez des
+# propriétaires différents (phmatray/.github et Atypical-Consulting/.github).
+# Le nom de session doit donc venir du dépôt distant, ou à défaut du chemin.
+session_base() { # session_base <chemin> <nwo>
+  if [[ -n ${2-} ]]; then
+    printf 'aikit-%s\n' "$(slugify "$2")"
+  else
+    printf 'aikit-%s-%s\n' "$(slugify "$(basename "$1")")" \
+      "$(cksum <<<"$1" | cut -d' ' -f1)"
+  fi
+}
+
+# Une session par lancement : `new-session -A` rattacherait la précédente en
+# ignorant silencieusement la skill demandée.
+free_session() { local base="$1" name="$1" n=2
+  while tmux has-session -t "$name" 2>/dev/null; do name="$base-$((n++))"; done
+  printf '%s\n' "$name"
+}
+
+sessions_of() { # sessions_of <base> [--include-done] -> sessions de ce dépôt
+  local base="$1" all="${2-}" s
+  tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E "^$base(-[0-9]+)?$" |
+    while read -r s; do
+      [[ -n $all || ! -f "$AIKIT_CACHE/done/$s" ]] && printf '%s\n' "$s"
+    done
+}
+
+session_done() { [[ -f "$AIKIT_CACHE/done/$1" ]]; }
 nwo_of() { # "" si le dépôt n'a pas de remote GitHub, ou si git refuse de le lire
   local url
   url=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 0
@@ -66,18 +98,26 @@ nwo_of() { # "" si le dépôt n'a pas de remote GitHub, ou si git refuse de le l
 
 # --- modes internes ---------------------------------------------------------
 if [[ ${1-} == --exec ]]; then
-  exec tmux new-session -A -s "$2" -c "$3" "$HOME/.local/bin/aikit" --run "$3" "$4"
+  exec tmux new-session -s "$2" -c "$3" "$HOME/.local/bin/aikit" --run "$3" "$4" "$2"
 fi
 
 if [[ ${1-} == --run ]]; then
-  dir="$2" prompt="$3" rc=0
+  dir="$2" prompt="$3" session="${4-}" rc=0
   repo=$(basename "$dir")
   claude $AIKIT_CLAUDE_FLAGS "$prompt" || rc=$?
-  rm -f "$AIKIT_CACHE/notified/aikit-$(slug_of "$dir")"
+  [[ -n $session ]] && rm -f "$AIKIT_CACHE/notified/$session"
   if ((rc == 0)); then
     notify "$(t done_ok_title "$repo")" "$(t done_ok_body)"
   else
     notify -u critical "$(t done_err_title "$repo")" "$(t done_err_body "$rc")"
+  fi
+  # claude a rendu la main mais le pane reste ouvert pour que la sortie soit
+  # lisible : la session tmux existe encore. On la marque terminée, sinon elle
+  # continue de compter comme active dans la barre et dans les listes.
+  if [[ -n $session ]]; then
+    mkdir -p "$AIKIT_CACHE/done"
+    printf '%s\n' "$rc" > "$AIKIT_CACHE/done/$session"
+    trap 'rm -f "$AIKIT_CACHE/done/$session"' EXIT
   fi
   printf '\n\033[2m%s\033[0m\n' "$(t press_enter "$rc")"
   read -r _ || true
@@ -177,6 +217,7 @@ pick_number() { # <dépôt> <nwo> <issues|prs> <invite> -> numéro choisi
   fi
   mapfile -t rows < <(python3 "$ROWS" "$kind" "$AIKIT_DB" "$nwo")
   ((${#rows[@]})) || die "$(t nothing_open)" "$(basename "$repo")"
+  rows+=("$(row "__back" "$G_BACK" "$(t back_row)" "$(t back_hint)")")
   ((AGE >= 0)) && age=" · $(t stale "$AGE min")"
   MENU_ARGS=(--width 880 --height 560)
   key=$(menu_pick "$prompt$age" "${rows[@]}") || return 1
@@ -189,9 +230,9 @@ q() { (($1 < 0)) && echo "?" || echo "$1"; }   # compteur pas encore connu
 pick_skill() { # <dépôt> <nwo> -> identifiant de skill
   local repo="$1" nwo="$2" rows=() session
 
-  session="aikit-$(slug_of "$repo")"
-  tmux has-session -t "$session" 2>/dev/null &&
-    rows+=("$(row "__attach" "$G_RESUME" "$(t skill_resume)" "$(t skill_resume_d "$session")")")
+  session=$(sessions_of "$(session_base "$repo" "$nwo")" | head -1)
+  [[ -n $session ]] &&
+    rows+=("$(row "__attach|$session" "$G_RESUME" "$(t skill_resume)" "$(t skill_resume_d "$session")")")
 
   if [[ -n $nwo ]]; then
     rows+=("$(row "auto-dev"         "$G_AUTODEV"   "$(t skill_autodev)"   "$(t skill_autodev_d "$(q "$ELIGIBLE")")")")
@@ -206,6 +247,7 @@ pick_skill() { # <dépôt> <nwo> -> identifiant de skill
   rows+=("$(row "migrate-assess" "$G_ASSESS"    "$(t skill_assess)"    "$(t skill_assess_d)")")
   rows+=("$(row "migrate"        "$G_MIGRATE"   "$(t skill_migrate)"   "$(t skill_migrate_d)")")
 
+  rows+=("$(row "__back" "$G_BACK" "$(t back_row)" "$(t back_hint)")")
   MENU_ARGS=(--width 880 --height 560)
   menu_pick "$(basename "$repo")" "${rows[@]}"
 }
@@ -219,7 +261,13 @@ attach_session() {
     if ((${#sessions[@]} == 1)); then
       sel="${sessions[0]}"
     else
-      for s in "${sessions[@]}"; do rows+=("$(row "$s" "$G_RESUME" "${s#aikit-}" "tmux $s")"); done
+      for s in "${sessions[@]}"; do
+        if session_done "$s"; then
+          rows+=("$(row "$s" "$G_DONE" "${s#aikit-}" "$(t session_finished "$(cat "$AIKIT_CACHE/done/$s")")")")
+        else
+          rows+=("$(row "$s" "$G_RESUME" "${s#aikit-}" "tmux $s")")
+        fi
+      done
       MENU_ARGS=(--width 520)
       sel=$(menu_pick "$(t session_prompt)" "${rows[@]}") || exit 0
       [[ -n $sel ]] || exit 0
@@ -229,11 +277,11 @@ attach_session() {
   exec omarchy-launch-or-focus-tui --app-id=org.omarchy.aikit "tmux attach -t $sel"
 }
 
-launch() { # <titre> <dépôt> <prompt>
+launch() { # <titre> <dépôt> <prompt> — une session neuve, jamais un rattachement
   local title="$1" repo="$2" prompt="$3" session
-  session="aikit-$(slug_of "$repo")"
-  mkdir -p "$AIKIT_CACHE/notified"
-  rm -f "$AIKIT_CACHE/notified/$session"
+  session=$(free_session "$(session_base "$repo" "$(nwo_of "$repo")")")
+  mkdir -p "$AIKIT_CACHE/notified" "$AIKIT_CACHE/done"
+  rm -f "$AIKIT_CACHE/notified/$session" "$AIKIT_CACHE/done/$session"
   notify "$title" "$(basename "$repo")  ·  tmux: $session"
   exec omarchy-launch-tui --app-id=org.omarchy.aikit \
     "$HOME/.local/bin/aikit" --exec "$session" "$repo" "$prompt"
@@ -272,50 +320,66 @@ work_queue() {
 
 # --- parcours : dépôt d'abord, skill ensuite --------------------------------
 skill=${1-}; shift 2>/dev/null || true
+SKILL_ARGS=("$@")          # arguments passés à la skill en ligne de commande
 
 case "$skill" in
   auto-dev|implement-issue|merge-pr|create-issue|triage-backlog|setup-repo|get-repo-profile) gh_only=github ;;
   *) gh_only="" ;;
 esac
 
-repo=$(pick_repo "$gh_only") || exit 0
-[[ -n $repo && -d $repo ]] || exit 0
+run_skill() { # <dépôt> <nwo> <skill> -> 1 si l'utilisateur revient en arrière
+  local repo="$1" nwo="$2" skill="$3" n idea eligible_note state_slug prompt
 
-nwo=$(nwo_of "$repo")
-freshen "$nwo" "$repo"
-counts_of "$nwo"
+  case "$skill" in
+    auto-dev)
+      eligible_note=""; ((ELIGIBLE > 0)) && eligible_note=$(t agents_eligible "$ELIGIBLE")
+      n=$(ask "$(t agents_prompt "$eligible_note")") || return 1
+      n=${n:-3}
+      mkdir -p "$AIKIT_STATE_DIR"
+      state_slug=$(session_base "$repo" "$nwo"); state_slug=${state_slug#aikit-}
+      launch "auto-dev · $n agents" "$repo" \
+        "/ai-migration-kit:auto-dev $n agents, effort small d'abord puis medium. Tiens le state file de la flotte dans $AIKIT_STATE_DIR/$state_slug.md (crée-le au démarrage, garde-le à jour à chaque dispatch et à chaque merge)."
+      ;;
+    implement-issue)
+      n=$(pick_number "$repo" "$nwo" issues "$(t issue_prompt)") || return 1
+      [[ -n $n && $n != __back ]] || return 1
+      launch "implement-issue #$n" "$repo" "/ai-migration-kit:implement-issue $n"
+      ;;
+    merge-pr)
+      n=$(pick_number "$repo" "$nwo" prs "$(t pr_prompt)") || return 1
+      [[ -n $n && $n != __back ]] || return 1
+      launch "merge-pr #$n" "$repo" "/ai-migration-kit:merge-pr $n"
+      ;;
+    create-issue)
+      idea=$(ask "$(t idea_prompt)") || return 1
+      [[ -n $idea ]] || return 1
+      launch "create-issue" "$repo" "/ai-migration-kit:create-issue $idea"
+      ;;
+    *)
+      prompt="/ai-migration-kit:$skill ${SKILL_ARGS[*]-}"
+      launch "$skill" "$repo" "${prompt% }"
+      ;;
+  esac
+}
 
-if [[ -z $skill ]]; then
-  skill=$(pick_skill "$repo" "$nwo") || exit 0
-  [[ -n $skill ]] || exit 0
-  [[ $skill == __attach ]] && attach_session "aikit-$(slug_of "$repo")"
-fi
+# Échap (ou la ligne « retour ») remonte d'un cran au lieu de tout annuler.
+while :; do
+  repo=$(pick_repo "$gh_only") || exit 0
+  [[ -n $repo && -d $repo ]] || exit 0
 
-case "$skill" in
-  auto-dev)
-    eligible_note=""; ((ELIGIBLE > 0)) && eligible_note=$(t agents_eligible "$ELIGIBLE")
-    n=$(ask "$(t agents_prompt "$eligible_note")") || exit 0
-    n=${n:-3}
-    mkdir -p "$AIKIT_STATE_DIR"
-    launch "auto-dev · $n agents" "$repo" \
-      "/ai-migration-kit:auto-dev $n agents, effort small d'abord puis medium. Tiens le state file de la flotte dans $AIKIT_STATE_DIR/$(slug_of "$repo").md (crée-le au démarrage, garde-le à jour à chaque dispatch et à chaque merge)."
-    ;;
-  implement-issue)
-    n=$(pick_number "$repo" "$nwo" issues "$(t issue_prompt)") || exit 0
-    [[ -n $n ]] || exit 0
-    launch "implement-issue #$n" "$repo" "/ai-migration-kit:implement-issue $n"
-    ;;
-  merge-pr)
-    n=$(pick_number "$repo" "$nwo" prs "$(t pr_prompt)") || exit 0
-    [[ -n $n ]] || exit 0
-    launch "merge-pr #$n" "$repo" "/ai-migration-kit:merge-pr $n"
-    ;;
-  create-issue)
-    idea=$(ask "$(t idea_prompt)") || exit 0
-    [[ -n $idea ]] || exit 0
-    launch "create-issue" "$repo" "/ai-migration-kit:create-issue $idea"
-    ;;
-  *)
-    launch "$skill" "$repo" "/ai-migration-kit:$skill $*"
-    ;;
-esac
+  nwo=$(nwo_of "$repo")
+  freshen "$nwo" "$repo"
+  counts_of "$nwo"
+
+  if [[ -n $skill ]]; then                 # skill imposée en argument
+    run_skill "$repo" "$nwo" "$skill" || exit 0
+    exit 0
+  fi
+
+  while :; do
+    chosen=$(pick_skill "$repo" "$nwo") || break
+    [[ -n $chosen && $chosen != __back ]] || break
+    [[ $chosen == __attach* ]] && attach_session "${chosen#__attach|}"
+    run_skill "$repo" "$nwo" "$chosen" || continue
+  done
+done

@@ -19,6 +19,7 @@ source "$HOME/.local/share/aikit/i18n.sh"
 CACHE="$HOME/.cache/aikit"
 STATE="$CACHE/state"
 STAMPS="$CACHE/notified"
+DONE="$CACHE/done"
 DB="$HOME/.local/share/aikit/aikit.db"
 STALL=${AIKIT_STALL_SECS:-300}
 SYNC_STALE=${AIKIT_SYNC_STALE_SECS:-1200}
@@ -71,13 +72,24 @@ parse_state() {
 }
 
 mkdir -p "$STAMPS"
-n=0 total_merges=0 stalled=0 lines=()
+n=0 total_merges=0 stalled=0 finished=0 lines=()
 
 while IFS='|' read -r name attached activity; do
   [[ -n $name ]] || continue
-  ((n++))
   slug=${name#aikit-}
-  read -r inflight merges queue < <(parse_state "$STATE/$slug.md")
+
+  # claude a fini mais le pane attend une touche : la session existe encore
+  # sans être un travail en cours — elle ne compte pas, et ne peut pas « caler ».
+  if [[ -f $DONE/$name ]]; then
+    ((finished++))
+    lines+=("$slug — $(t session_finished "$(cat "$DONE/$name")")")
+    rm -f "$STAMPS/$name"
+    continue
+  fi
+  ((n++))
+  # une deuxième session sur le même dépôt s'appelle « …-2 » : le state file,
+  # lui, reste celui du dépôt
+  read -r inflight merges queue < <(parse_state "$STATE/${slug%-[0-9]}.md")
   ((total_merges += merges))
 
   idle=$(( now - activity ))
@@ -105,9 +117,12 @@ while IFS='|' read -r name attached activity; do
 done <<<"$sessions"
 
 text="󱓞 $n"
+((n == 0)) && text="󱓞"
 ((total_merges)) && text="$text · $total_merges✓"
 ((stalled)) && text="$text !"
 
+header=$(t bar_header "$n")
+((finished)) && header="$header · $(t bar_finished "$finished")"
 emit "$text" \
-     "$(printf '%s\n%s\n%s' "$(t bar_header "$n")" "$(printf '%s\n' "${lines[@]}")" "$(t bar_hint)")" \
-     "$( ((stalled)) && echo urgent || echo active )"
+     "$(printf '%s\n%s\n%s' "$header" "$(printf '%s\n' "${lines[@]}")" "$(t bar_hint)")" \
+     "$( ((stalled)) && echo urgent || { ((n)) && echo active || echo ""; } )"
