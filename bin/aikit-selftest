@@ -14,7 +14,14 @@
 set -uo pipefail
 
 VERBOSE=${1:-}
-SHARE=${AIKIT_SHARE_SRC:-$HOME/.local/share/aikit}
+# Ressources : celles du dépôt d'abord (utile en CI), sinon l'installation
+SELF_DIR=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)
+SHARE=${AIKIT_SHARE_SRC:-}
+for d in "$SHARE" "$SELF_DIR/../share" "$HOME/.local/share/aikit" /usr/share/aikit; do
+  [[ -n $d && -f $d/rows.py ]] && { SHARE=$(cd -- "$d" && pwd); break; }
+done
+[[ -f $SHARE/rows.py ]] || { echo "aikit-selftest: ressources introuvables" >&2; exit 1; }
+AIKIT_BIN=${AIKIT_BIN:-$SELF_DIR/aikit}
 PASS=0 FAIL=0
 
 sandbox=$(mktemp -d) || exit 1
@@ -135,7 +142,7 @@ flow() { # flow [--args <arg>] <choix...> -> sortie d'aikit (dont la ligne LAUNC
   PICKS="$sandbox/picks" TRACE="${VERBOSE:+$sandbox/trace}" SESSIONS="$sandbox/sessions" \
   AIKIT_SHARE="$sandbox/share" AIKIT_DB="$sandbox/share/aikit.db" \
   AIKIT_CACHE="$sandbox/cache" AIKIT_ROOTS="$sandbox/repos" AIKIT_LANG=en \
-    ${AIKIT_XTRACE:+bash -x} "$HOME/.local/bin/aikit" "${args[@]}" 2>"$sandbox/err"
+    ${AIKIT_XTRACE:+bash -x} "$AIKIT_BIN" "${args[@]}" 2>"$sandbox/err"
   [[ -n ${AIKIT_DEBUG:-} ]] && { echo "--- err ---" >&2; cat "$sandbox/err" >&2; }
 }
 
@@ -274,7 +281,7 @@ echo "Chaînes"
 used=$( {
     # les clés littérales : toutes passent par $(t clé) ou T("clé")
     grep -ohE '\$\(t [a-z][a-z0-9_]*' "$HOME/.local/bin/aikit" \
-         "$HOME/.config/omarchy/bar/scripts/aikit-status" | sed 's/.*(t //'
+         "$SELF_DIR/../omarchy/bar-scripts/aikit-status" | sed 's/.*(t //'
     grep -ohE 'T\("[a-z][a-z0-9_]*"' "$SHARE/rows.py" | sed 's/T("//;s/"//' | grep -v '_$'
     # les clés construites à l'exécution
     printf 'ci_ok\nci_fail\nci_pending\nci_none\n'

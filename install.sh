@@ -49,6 +49,11 @@ if [[ $DRY != --dry-run ]]; then
 fi
 
 echo
-echo "Fait. Vérifie avec :  aikit-selftest    puis    aikit-sync --status"
+if [[ $DRY != --dry-run ]]; then
+  echo "Prérequis"
+  "$BIN/aikit" doctor || say "des prérequis manquent — voir ci-dessus"
+fi
+echo
+echo "Fait. Vérifie avec :  aikit-selftest"
 echo "Raccourci clavier : ajoute à ~/.config/hypr/bindings.lua"
 echo '  o.bind("SUPER + CTRL + M", "AI Kit", "aikit")'

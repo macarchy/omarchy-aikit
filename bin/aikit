@@ -23,16 +23,56 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
+AIKIT_VERSION="0.1.0"
+
+# Où suis-je ? Le chemin sert à se relancer dans tmux : il doit rester valable
+# aussi bien depuis ~/.local/bin que depuis /usr/bin ou une copie de travail.
+SELF=$0
+[[ $SELF == */* ]] || SELF=$(command -v -- "$SELF")
+SELF=$(cd -- "$(dirname -- "$SELF")" && pwd)/$(basename -- "$SELF")
+SELF_DIR=$(dirname -- "$(readlink -f -- "$SELF")")
+
 # ~/.local/bin doit être joignable depuis la session tmux, mais sans passer
 # devant un PATH déjà préparé (bac à sable des tests, wrappers).
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
-AIKIT_SHARE=${AIKIT_SHARE:-$HOME/.local/share/aikit}
+
+# Ressources (rows.py, i18n.sh, strings.json) : à côté du script pour une copie
+# de travail, sinon ../share/aikit pour une installation en préfixe, sinon ~/.
+find_share() {
+  local d
+  for d in "${AIKIT_SHARE-}" "$SELF_DIR/../share" "$SELF_DIR/../share/aikit" \
+           "$HOME/.local/share/aikit" /usr/share/aikit /usr/local/share/aikit; do
+    [[ -n $d && -f $d/rows.py && -f $d/i18n.sh && -f $d/strings.json ]] && {
+      (cd -- "$d" && pwd); return 0; }
+  done
+  return 1
+}
+AIKIT_SHARE=$(find_share) || {
+  echo "aikit: ressources introuvables (rows.py, i18n.sh, strings.json)" >&2
+  echo "       essaie AIKIT_SHARE=<dossier> ou relance install.sh" >&2
+  exit 1
+}
 source "$AIKIT_SHARE/i18n.sh"
 
-AIKIT_ROOTS=${AIKIT_ROOTS:-"$HOME/Data/Repositories $HOME/Work $HOME/Projects"}
+# Réglages persistants, éventuellement écrits par « aikit doctor »
+AIKIT_CONFIG=${AIKIT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/aikit/config}
+[[ -f $AIKIT_CONFIG ]] && source "$AIKIT_CONFIG"
+
+# Racines par défaut : les emplacements de clones les plus courants, filtrés
+# sur ce qui existe réellement chez l'utilisateur.
+default_roots() {
+  local d found=()
+  for d in "$HOME/src" "$HOME/code" "$HOME/dev" "$HOME/git" "$HOME/repos" \
+           "$HOME/Projects" "$HOME/Work" "$HOME/Development" "$HOME/Data/Repositories"; do
+    [[ -d $d ]] && found+=("$d")
+  done
+  ((${#found[@]})) || found=("$HOME")
+  printf '%s\n' "${found[*]}"
+}
+AIKIT_ROOTS=${AIKIT_ROOTS:-$(default_roots)}
 AIKIT_CLAUDE_FLAGS=${AIKIT_CLAUDE_FLAGS:---permission-mode acceptEdits}
 AIKIT_CACHE=${AIKIT_CACHE:-$HOME/.cache/aikit}
 AIKIT_STATE_DIR="$AIKIT_CACHE/state"
@@ -96,9 +136,69 @@ nwo_of() { # "" si le dépôt n'a pas de remote GitHub, ou si git refuse de le l
   sed -nE 's#.*github\.com[:/]([^/]+)/(.+)$#\1/\2#p' <<<"$url" | sed 's/\.git$//'   # ERE n'a pas de quantificateur paresseux
 }
 
+usage() {
+  cat <<USAGE
+aikit $AIKIT_VERSION — lance les skills de l'AI Migration Kit depuis le bureau.
+
+  aikit                 choisir un dépôt, puis une skill
+  aikit work            ce qui m'attend, tous dépôts confondus
+  aikit <skill> [args]  imposer la skill (auto-dev, implement-issue, merge-pr…)
+  aikit attach          réattacher une session en cours
+  aikit sync            forcer une synchronisation de la base
+  aikit doctor          vérifier les prérequis
+  aikit --help | --version
+
+Réglages (variables d'environnement ou $AIKIT_CONFIG) :
+  AIKIT_ROOTS          racines de recherche des dépôts
+                       (actuellement : $AIKIT_ROOTS)
+  AIKIT_CLAUDE_FLAGS   options passées à claude ($AIKIT_CLAUDE_FLAGS)
+  AIKIT_LANG           en | fr (actuellement : $AIKIT_L)
+  AIKIT_STALL_SECS     silence au-delà duquel un agent est réputé bloqué
+USAGE
+}
+
+doctor() {
+  local ok=0 miss=0
+  line() { # line <intitulé> <état> [conseil]
+    if [[ $2 == ok ]]; then
+      printf '  \033[32m✓\033[0m %-28s %s\n' "$1" "$(t doctor_ok)"; ok=$((ok + 1))
+    else
+      printf '  \033[31m✗\033[0m %-28s %s%s\n' "$1" "$(t doctor_missing)" "${3:+ — $3}"; miss=$((miss + 1))
+    fi
+  }
+  echo "aikit $AIKIT_VERSION"
+  echo
+  for c in tmux jq python3 sqlite3 git; do
+    line "$c" "$(command -v "$c" >/dev/null && echo ok || echo no)"
+  done
+  line claude "$(command -v claude >/dev/null && echo ok || echo no)" \
+       "https://claude.com/claude-code"
+  line gh "$(command -v gh >/dev/null && echo ok || echo no)" "$(t doctor_hint_gh)"
+  command -v gh >/dev/null &&
+    line "gh auth" "$(gh auth status >/dev/null 2>&1 && echo ok || echo no)" "gh auth login"
+  line "ai-migration-kit" \
+       "$(ls -d "$HOME"/.claude/plugins/cache/*/ai-migration-kit/* >/dev/null 2>&1 && echo ok || echo no)" \
+       "$(t doctor_hint_kit)"
+  line "omarchy-menu-select" "$(command -v omarchy-menu-select >/dev/null && echo ok || echo no)" \
+       "https://omarchy.org"
+  local n; n=$(list_repos | wc -l)
+  line "$(t doctor_roots) ($n)" "$( ((n)) && echo ok || echo no)" "$(t doctor_none): $AIKIT_ROOTS"
+  line "aikit-sync.timer" \
+       "$(systemctl --user is-active aikit-sync.timer >/dev/null 2>&1 && echo ok || echo no)" \
+       "systemctl --user enable --now aikit-sync.timer"
+  echo
+  command -v aikit-sync >/dev/null && aikit-sync --status
+  ((miss == 0))
+}
+
+case "${1-}" in
+  -h|--help|help) usage; exit 0 ;;
+  -V|--version)   echo "aikit $AIKIT_VERSION"; exit 0 ;;
+esac
+
 # --- modes internes ---------------------------------------------------------
 if [[ ${1-} == --exec ]]; then
-  exec tmux new-session -s "$2" -c "$3" "$HOME/.local/bin/aikit" --run "$3" "$4" "$2"
+  exec tmux new-session -s "$2" -c "$3" "$SELF" --run "$3" "$4" "$2"
 fi
 
 if [[ ${1-} == --run ]]; then
@@ -284,7 +384,7 @@ launch() { # <titre> <dépôt> <prompt> — une session neuve, jamais un rattach
   rm -f "$AIKIT_CACHE/notified/$session" "$AIKIT_CACHE/done/$session"
   notify "$title" "$(basename "$repo")  ·  tmux: $session"
   exec omarchy-launch-tui --app-id=org.omarchy.aikit \
-    "$HOME/.local/bin/aikit" --exec "$session" "$repo" "$prompt"
+    "$SELF" --exec "$session" "$repo" "$prompt"
 }
 
 # --- boîte de travail transversale ------------------------------------------
@@ -315,8 +415,15 @@ work_queue() {
   launch "$skill #$number" "$path" "$prompt"
 }
 
+[[ ${1-} == doctor ]] && { doctor; exit $?; }
 [[ ${1-} == attach ]] && attach_session
 [[ ${1-} == work ]] && work_queue
+
+# Base absente ou vide : on l'amorce plutôt que d'afficher « ? » partout.
+if [[ ! -f $AIKIT_DB ]] || [[ -z $(sqlite3 "$AIKIT_DB" "SELECT 1 FROM repos LIMIT 1" 2>/dev/null) ]]; then
+  notify "$(t first_run)"
+  command -v aikit-sync >/dev/null && aikit-sync --repos --force >/dev/null 2>&1 || true
+fi
 
 # --- parcours : dépôt d'abord, skill ensuite --------------------------------
 skill=${1-}; shift 2>/dev/null || true
@@ -338,7 +445,7 @@ run_skill() { # <dépôt> <nwo> <skill> -> 1 si l'utilisateur revient en arrièr
       mkdir -p "$AIKIT_STATE_DIR"
       state_slug=$(session_base "$repo" "$nwo"); state_slug=${state_slug#aikit-}
       launch "auto-dev · $n agents" "$repo" \
-        "/ai-migration-kit:auto-dev $n agents, effort small d'abord puis medium. Tiens le state file de la flotte dans $AIKIT_STATE_DIR/$state_slug.md (crée-le au démarrage, garde-le à jour à chaque dispatch et à chaque merge)."
+        "$(t autodev_prompt "$n" "$AIKIT_STATE_DIR/$state_slug.md")"
       ;;
     implement-issue)
       n=$(pick_number "$repo" "$nwo" issues "$(t issue_prompt)") || return 1

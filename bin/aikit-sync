@@ -29,7 +29,8 @@ import subprocess
 import sys
 import time
 
-DB_PATH = pathlib.Path.home() / ".local/share/aikit/aikit.db"
+DB_PATH = pathlib.Path(os.environ.get("AIKIT_DB") or
+                       pathlib.Path.home() / ".local/share/aikit/aikit.db")
 TRACK_TTL = 30 * 86400          # un dépôt reste « suivi » 30 jours après usage
 FAILED = {"FAILURE", "TIMED_OUT", "CANCELLED", "ERROR"}
 RUNNING = {"IN_PROGRESS", "QUEUED", "PENDING", "WAITING"}
@@ -130,12 +131,20 @@ def ci_state(checks):
     return "ok"
 
 
+def default_roots():
+    """Mêmes emplacements de clones que le lanceur, filtrés sur ce qui existe."""
+    home = pathlib.Path.home()
+    candidates = ["src", "code", "dev", "git", "repos", "Projects", "Work",
+                  "Development", "Data/Repositories"]
+    found = [str(home / c) for c in candidates if (home / c).is_dir()]
+    return " ".join(found) or str(home)
+
+
 def local_clones():
     """Associe chaque dépôt distant à son clone local : « owner/name » → chemin.
     C'est ce qui permet à la boîte de travail transversale d'ouvrir une session
     au bon endroit, sans redemander le dépôt."""
-    roots = os.environ.get("AIKIT_ROOTS") or " ".join(
-        str(pathlib.Path.home() / d) for d in ("Data/Repositories", "Work", "Projects"))
+    roots = os.environ.get("AIKIT_ROOTS") or default_roots()
     found = {}
     for root in roots.split():
         base = pathlib.Path(root)
@@ -154,8 +163,7 @@ def local_clones():
 
 def local_owners():
     """Comptes lus dans les remotes des clones locaux (AIKIT_ROOTS)."""
-    roots = os.environ.get("AIKIT_ROOTS") or " ".join(
-        str(pathlib.Path.home() / d) for d in ("Data/Repositories", "Work", "Projects"))
+    roots = os.environ.get("AIKIT_ROOTS") or default_roots()
     found = set()
     for root in roots.split():
         base = pathlib.Path(root)

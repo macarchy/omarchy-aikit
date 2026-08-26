@@ -14,13 +14,18 @@
 #   clic gauche  → dépôt puis skill      clic droit → reprendre une session
 #   clic milieu  → auto-dev
 
-source "$HOME/.local/share/aikit/i18n.sh"
+# Ressources : même ordre de recherche que le lanceur
+for d in "${AIKIT_SHARE-}" "$HOME/.local/share/aikit" /usr/share/aikit /usr/local/share/aikit; do
+  [[ -n $d && -f $d/i18n.sh ]] && { AIKIT_SHARE=$d; break; }
+done
+[[ -f ${AIKIT_SHARE-}/i18n.sh ]] || { printf '%s\n' '{"text":"","tooltip":"aikit: ressources introuvables","class":"warning"}'; exit 0; }
+source "$AIKIT_SHARE/i18n.sh"
 
 CACHE="$HOME/.cache/aikit"
 STATE="$CACHE/state"
 STAMPS="$CACHE/notified"
 DONE="$CACHE/done"
-DB="$HOME/.local/share/aikit/aikit.db"
+DB=${AIKIT_DB:-$HOME/.local/share/aikit/aikit.db}
 STALL=${AIKIT_STALL_SECS:-300}
 SYNC_STALE=${AIKIT_SYNC_STALE_SECS:-1200}
 G_WARN=$''        # ! panne de synchro

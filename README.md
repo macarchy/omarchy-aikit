@@ -57,7 +57,24 @@ aikit-selftest                    # 17 vérifications, sans réseau ni fenêtre
 (la base et le cache sont conservés). Chaque fichier remplacé est sauvegardé
 avec un horodatage.
 
-Prérequis : `gh` authentifié, `tmux`, `jq`, `python3`, `sqlite3`, Omarchy.
+`aikit doctor` vérifie les prérequis un par un et dit quoi installer :
+`gh` authentifié, `tmux`, `jq`, `python3`, `sqlite3`, `git`, `claude`, Omarchy,
+et le plugin [ai-migration-kit](https://github.com/phmatray/ai-migration-kit)
+côté Claude Code — sans lui, les skills n'existent pas.
+
+Les racines de dépôts sont devinées au premier lancement parmi les emplacements
+courants (`~/src`, `~/code`, `~/dev`, `~/git`, `~/repos`, `~/Projects`, `~/Work`,
+`~/Development`) ; `AIKIT_ROOTS` les remplace, dans l'environnement ou dans
+`~/.config/aikit/config`.
+
+## Ce que la base contient, et où elle reste
+
+`~/.local/share/aikit/aikit.db` stocke des **noms de dépôts, des titres d'issues
+et de PR, des labels et des états CI — y compris pour tes dépôts privés**. Elle
+est écrite par `aikit-sync` depuis ton `gh` authentifié, elle vit sous ton compte
+et **elle ne quitte jamais la machine** : aucun composant ne l'envoie ailleurs.
+`uninstall.sh` la laisse en place ; supprime `~/.local/share/aikit` et
+`~/.cache/aikit` pour tout effacer.
 
 ## Les morceaux
 

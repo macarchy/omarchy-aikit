@@ -11,7 +11,7 @@ declare -A AIKIT_T
 while IFS=$'\t' read -r _k _v; do
   [[ -n $_k ]] && AIKIT_T[$_k]=$_v
 done < <(jq -r --arg l "$AIKIT_L" '.[$l] | to_entries[] | "\(.key)\t\(.value)"' \
-         "$HOME/.local/share/aikit/strings.json" 2>/dev/null)
+         "${AIKIT_STRINGS:-${BASH_SOURCE[0]%/*}/strings.json}" 2>/dev/null)
 unset _k _v
 
 t() { # t <clé> [args de printf...] — une clé absente s'affiche telle quelle

@@ -50,8 +50,15 @@ def merge_menu():
     print("  menu : entrées AI Kit à jour")
 
 
+def resolve(text):
+    """Remplace les jetons par les chemins réellement installés."""
+    binary = shutil.which("aikit") or str(HOME / ".local/bin/aikit")
+    script = HOME / ".config/omarchy/bar/scripts/aikit-status"
+    return text.replace("@AIKIT_BIN@", binary).replace("@AIKIT_BAR_SCRIPT@", str(script))
+
+
 def merge_shell():
-    widget = json.loads((HERE / "fragments/bar-widget.json").read_text())
+    widget = json.loads(resolve((HERE / "fragments/bar-widget.json").read_text()))
     if not SHELL.exists():
         print(f"  absent, ignoré : {SHELL}")
         return
