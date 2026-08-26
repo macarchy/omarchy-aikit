@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq sqlite3 tmux
+
+      - name: Syntax
+        run: |
+          for f in bin/aikit bin/aikit-status bin/aikit-selftest install.sh uninstall.sh share/i18n.sh; do
+            bash -n "$f"
+          done
+          python3 -m py_compile bin/aikit-sync share/rows.py omarchy/merge-config.py
+
+      - name: Manifests and strings
+        run: |
+          jq -e . share/strings.json > /dev/null
+          python3 - <<'PY'
+          import json
+          cat = json.load(open("share/strings.json"))
+          missing = set(cat["en"]) ^ set(cat["fr"])
+          assert not missing, f"clés désalignées entre en et fr : {sorted(missing)}"
+          print(f"{len(cat['en'])} clés, alignées")
+          PY
+
+      - name: Selftest
+        run: ./bin/aikit-selftest

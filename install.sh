@@ -33,9 +33,9 @@ link() { # link <source> <destination> — sauvegarde un vrai fichier existant
 
 echo "AI Kit — installation depuis $SRC"
 
-for f in aikit aikit-sync aikit-selftest; do link "$SRC/bin/$f" "$BIN/$f"; done
+for f in aikit aikit-status aikit-sync aikit-selftest; do link "$SRC/bin/$f" "$BIN/$f"; done
 for f in rows.py i18n.sh strings.json; do link "$SRC/share/$f" "$SHARE/$f"; done
-link "$SRC/omarchy/bar-scripts/aikit-status" "$BAR/aikit-status"
+link "$SRC/bin/aikit-status" "$BAR/aikit-status"   # widget « command » d'Omarchy
 for u in aikit-sync.service aikit-sync.timer; do link "$SRC/systemd/$u" "$UNITS/$u"; done
 
 echo "Entrées Omarchy"

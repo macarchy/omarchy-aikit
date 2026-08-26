@@ -1,9 +1,12 @@
 [Unit]
 Description=Synchronise la base locale GitHub d'AI Kit
+Documentation=https://github.com/phmatray/aikit
 After=graphical-session.target
 
 [Service]
 Type=oneshot
 Nice=10
-ExecStart=%h/.local/bin/aikit-sync
+# Vaut pour une installation en paquet (/usr/bin) comme pour un lien dans ~/.local/bin
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=/usr/bin/env aikit-sync
 TimeoutStartSec=10min

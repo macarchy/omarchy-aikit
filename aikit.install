@@ -1,0 +1,18 @@
+post_install() {
+  cat <<'NOTE'
+
+  AI Kit installé. Pour finir :
+
+    aikit doctor                                   vérifier les prérequis
+    aikit setup                                    poser le menu et le widget Omarchy
+    systemctl --user enable --now aikit-sync.timer démarrer la synchronisation
+
+  Widget de barre Omarchy (plus riche que l'entrée « command ») :
+    omarchy plugin add https://github.com/phmatray/omarchy-aikit.git --enable
+
+NOTE
+}
+
+post_upgrade() {
+  systemctl --user daemon-reload 2>/dev/null || true
+}

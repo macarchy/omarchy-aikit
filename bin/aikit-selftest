@@ -281,7 +281,7 @@ echo "Chaînes"
 used=$( {
     # les clés littérales : toutes passent par $(t clé) ou T("clé")
     grep -ohE '\$\(t [a-z][a-z0-9_]*' "$HOME/.local/bin/aikit" \
-         "$SELF_DIR/../omarchy/bar-scripts/aikit-status" | sed 's/.*(t //'
+         "$SELF_DIR/aikit-status" | sed 's/.*(t //'
     grep -ohE 'T\("[a-z][a-z0-9_]*"' "$SHARE/rows.py" | sed 's/T("//;s/"//' | grep -v '_$'
     # les clés construites à l'exécution
     printf 'ci_ok\nci_fail\nci_pending\nci_none\n'

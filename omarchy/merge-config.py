@@ -57,6 +57,9 @@ def resolve(text):
     return text.replace("@AIKIT_BIN@", binary).replace("@AIKIT_BAR_SCRIPT@", str(script))
 
 
+PLUGIN_ID = "phmatray.aikit"
+
+
 def merge_shell():
     widget = json.loads(resolve((HERE / "fragments/bar-widget.json").read_text()))
     if not SHELL.exists():
@@ -66,6 +69,19 @@ def merge_shell():
     right = cfg.setdefault("bar", {}).setdefault("layout", {}).setdefault("right", [])
     before = json.dumps(right, sort_keys=True)
     right[:] = [w for w in right if w.get("id") != "aikit"]
+
+    # Le plugin QML (omarchy plugin add phmatray.aikit) rend le même widget en
+    # mieux : s'il est là, on ne pose pas le doublon « command ».
+    if any(w.get("id") == PLUGIN_ID for w in right) or (
+            HOME / ".config/omarchy/plugins" / PLUGIN_ID / "manifest.json").exists():
+        if json.dumps(right, sort_keys=True) != before:
+            backup(SHELL)
+            if not DRY:
+                SHELL.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+            print("  barre : le plugin QML est installé, widget « command » retiré")
+        else:
+            print("  barre : le plugin QML est installé, rien à poser")
+        return
     anchor = next((i for i, w in enumerate(right) if w.get("id") == "github"), len(right) - 1)
     right.insert(anchor + 1, widget)
     if json.dumps(right, sort_keys=True) == before:

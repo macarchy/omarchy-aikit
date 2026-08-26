@@ -145,6 +145,7 @@ aikit $AIKIT_VERSION — lance les skills de l'AI Migration Kit depuis le bureau
   aikit <skill> [args]  imposer la skill (auto-dev, implement-issue, merge-pr…)
   aikit attach          réattacher une session en cours
   aikit sync            forcer une synchronisation de la base
+  aikit setup           poser les entrées Omarchy (menu, widget de barre)
   aikit doctor          vérifier les prérequis
   aikit --help | --version
 
@@ -416,6 +417,12 @@ work_queue() {
 }
 
 [[ ${1-} == doctor ]] && { doctor; exit $?; }
+if [[ ${1-} == setup ]]; then
+  merge="$AIKIT_SHARE/omarchy/merge-config.py"
+  [[ -f $merge ]] || merge="$SELF_DIR/../omarchy/merge-config.py"
+  [[ -f $merge ]] || die "aikit: merge-config.py introuvable"
+  exec python3 "$merge" "${@:2}"
+fi
 [[ ${1-} == attach ]] && attach_session
 [[ ${1-} == work ]] && work_queue
 

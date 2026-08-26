@@ -4,7 +4,7 @@
 set -euo pipefail
 
 systemctl --user disable --now aikit-sync.timer 2>/dev/null || true
-rm -f "$HOME"/.local/bin/{aikit,aikit-sync,aikit-selftest}
+rm -f "$HOME"/.local/bin/{aikit,aikit-status,aikit-sync,aikit-selftest}
 rm -f "$HOME"/.local/share/aikit/{rows.py,i18n.sh,strings.json}
 rm -f "$HOME/.config/omarchy/bar/scripts/aikit-status"
 rm -f "$HOME"/.config/systemd/user/aikit-sync.{service,timer}

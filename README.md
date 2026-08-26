@@ -47,15 +47,32 @@ la session est alors marquée *terminée* et ne compte plus comme travail en cou
 
 ## Installation
 
+**Arch / Omarchy — paquet :**
+
 ```bash
-git clone <ce dépôt> ~/Data/Repositories/phmatray/public/aikit
-cd aikit && ./install.sh          # liens symboliques, timer systemd, entrées Omarchy
-aikit-selftest                    # 17 vérifications, sans réseau ni fenêtre
+omarchy pkg aur add aikit-git      # ou : yay -S aikit-git
+aikit doctor                       # prérequis
+aikit setup                        # entrées de menu Omarchy
+systemctl --user enable --now aikit-sync.timer
+omarchy plugin add https://github.com/phmatray/omarchy-aikit.git --enable   # widget de barre
+```
+
+**Depuis les sources** (n'importe quelle distribution, ou pour bricoler) :
+
+```bash
+git clone https://github.com/phmatray/aikit && cd aikit
+./install.sh                       # liens symboliques, timer systemd, entrées Omarchy
+aikit-selftest                     # 32 vérifications, sans réseau ni fenêtre
 ```
 
 `./install.sh --dry-run` montre ce qui serait touché ; `./uninstall.sh` défait tout
 (la base et le cache sont conservés). Chaque fichier remplacé est sauvegardé
 avec un horodatage.
+
+Le widget de barre existe en deux formes : le **plugin Quickshell**
+[omarchy-aikit](https://github.com/phmatray/omarchy-aikit) (installé et mis à
+jour par `omarchy plugin`), ou une entrée `type: command` posée par `aikit setup`
+quand le plugin n'est pas là. `aikit setup` ne pose jamais les deux.
 
 `aikit doctor` vérifie les prérequis un par un et dit quoi installer :
 `gh` authentifié, `tmux`, `jq`, `python3`, `sqlite3`, `git`, `claude`, Omarchy,
