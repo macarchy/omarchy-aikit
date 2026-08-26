@@ -1,13 +1,13 @@
 post_install() {
   cat <<'NOTE'
 
-  AI Kit installé. Pour finir :
+  AI Kit installed. To finish:
 
-    aikit doctor                                   vérifier les prérequis
-    aikit setup                                    poser le menu et le widget Omarchy
-    systemctl --user enable --now aikit-sync.timer démarrer la synchronisation
+    aikit doctor                                   check the prerequisites
+    aikit setup                                    install the Omarchy entries
+    systemctl --user enable --now aikit-sync.timer start syncing
 
-  Widget de barre Omarchy (plus riche que l'entrée « command ») :
+  Omarchy bar widget (richer than the "command" entry):
     omarchy plugin add https://github.com/Atypical-Consulting/omarchy-aikit.git --enable
 
 NOTE

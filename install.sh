@@ -1,10 +1,10 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# Installe AI Kit : liens symboliques vers ce dépôt, unités systemd, entrées
-# Omarchy. Idempotent — relançable après un `git pull` sans rien casser.
+# Installs AI Kit: symlinks into this repository, systemd units, Omarchy
+# entries. Idempotent — safe to re-run after a `git pull`.
 #
-#   ./install.sh            installe ou met à jour
-#   ./install.sh --dry-run  montre ce qui serait fait
+#   ./install.sh            install or update
+#   ./install.sh --dry-run  show what would be done
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -18,30 +18,30 @@ UNITS="$HOME/.config/systemd/user"
 say() { printf '  %s\n' "$*"; }
 run() { [[ $DRY == --dry-run ]] && { say "→ $*"; return 0; }; "$@"; }
 
-link() { # link <source> <destination> — sauvegarde un vrai fichier existant
+link() { # link <source> <destination> — backs up a real file if one exists
   local src="$1" dst="$2"
   if [[ -L $dst ]]; then
-    [[ $(readlink -f "$dst") == "$src" ]] && { say "à jour   $dst"; return 0; }
+    [[ $(readlink -f "$dst") == "$src" ]] && { say "current  $dst"; return 0; }
   elif [[ -e $dst ]]; then
     run mv "$dst" "$dst.bak.$(date +%s)"
-    say "sauvegardé $dst"
+    say "backed up $dst"
   fi
   run mkdir -p "$(dirname "$dst")"
   run ln -sfn "$src" "$dst"
-  say "lié      $dst"
+  say "linked   $dst"
 }
 
-echo "AI Kit — installation depuis $SRC"
+echo "AI Kit — installing from $SRC"
 
 for f in aikit aikit-status aikit-sync aikit-selftest; do link "$SRC/bin/$f" "$BIN/$f"; done
 for f in rows.py i18n.sh strings.json; do link "$SRC/share/$f" "$SHARE/$f"; done
-link "$SRC/bin/aikit-status" "$BAR/aikit-status"   # widget « command » d'Omarchy
+link "$SRC/bin/aikit-status" "$BAR/aikit-status"   # Omarchy "command" widget
 for u in aikit-sync.service aikit-sync.timer; do link "$SRC/systemd/$u" "$UNITS/$u"; done
 
-echo "Entrées Omarchy"
+echo "Omarchy entries"
 python3 "$SRC/omarchy/merge-config.py" ${DRY:+--dry-run}
 
-echo "Service de synchronisation"
+echo "Sync service"
 if [[ $DRY != --dry-run ]]; then
   systemctl --user daemon-reload
   systemctl --user enable --now aikit-sync.timer
@@ -50,10 +50,10 @@ fi
 
 echo
 if [[ $DRY != --dry-run ]]; then
-  echo "Prérequis"
-  "$BIN/aikit" doctor || say "des prérequis manquent — voir ci-dessus"
+  echo "Prerequisites"
+  "$BIN/aikit" doctor || say "some prerequisites are missing — see above"
 fi
 echo
-echo "Fait. Vérifie avec :  aikit-selftest"
-echo "Raccourci clavier : ajoute à ~/.config/hypr/bindings.lua"
+echo "Done. Check with:  aikit-selftest"
+echo "Keybinding: add to ~/.config/hypr/bindings.lua"
 echo '  o.bind("SUPER + CTRL + M", "AI Kit", "aikit")'

@@ -51,8 +51,8 @@ find_share() {
   return 1
 }
 AIKIT_SHARE=$(find_share) || {
-  echo "aikit: ressources introuvables (rows.py, i18n.sh, strings.json)" >&2
-  echo "       essaie AIKIT_SHARE=<dossier> ou relance install.sh" >&2
+  echo "aikit: resources not found (rows.py, i18n.sh, strings.json)" >&2
+  echo "       try AIKIT_SHARE=<dir>, or re-run install.sh" >&2
   exit 1
 }
 source "$AIKIT_SHARE/i18n.sh"
@@ -138,23 +138,23 @@ nwo_of() { # "" si le dépôt n'a pas de remote GitHub, ou si git refuse de le l
 
 usage() {
   cat <<USAGE
-aikit $AIKIT_VERSION — lance les skills de l'AI Migration Kit depuis le bureau.
+aikit $AIKIT_VERSION — run AI Migration Kit skills from the desktop.
 
-  aikit                 choisir un dépôt, puis une skill
-  aikit work            ce qui m'attend, tous dépôts confondus
-  aikit <skill> [args]  imposer la skill (auto-dev, implement-issue, merge-pr…)
-  aikit attach          réattacher une session en cours
-  aikit sync            forcer une synchronisation de la base
-  aikit setup           poser les entrées Omarchy (menu, widget de barre)
-  aikit doctor          vérifier les prérequis
+  aikit                 pick a repository, then a skill
+  aikit work            what is waiting for you, across every repository
+  aikit <skill> [args]  force the skill (auto-dev, implement-issue, merge-pr…)
+  aikit attach          re-attach a running session
+  aikit sync            force a database sync
+  aikit setup           install the Omarchy entries (menu, bar widget)
+  aikit doctor          check the prerequisites
   aikit --help | --version
 
-Réglages (variables d'environnement ou $AIKIT_CONFIG) :
-  AIKIT_ROOTS          racines de recherche des dépôts
-                       (actuellement : $AIKIT_ROOTS)
-  AIKIT_CLAUDE_FLAGS   options passées à claude ($AIKIT_CLAUDE_FLAGS)
-  AIKIT_LANG           en | fr (actuellement : $AIKIT_L)
-  AIKIT_STALL_SECS     silence au-delà duquel un agent est réputé bloqué
+Settings (environment variables, or $AIKIT_CONFIG):
+  AIKIT_ROOTS          where to look for clones
+                       (currently: $AIKIT_ROOTS)
+  AIKIT_CLAUDE_FLAGS   flags passed to claude ($AIKIT_CLAUDE_FLAGS)
+  AIKIT_LANG           en | fr (currently: $AIKIT_L)
+  AIKIT_STALL_SECS     silence after which an agent is deemed stuck
 USAGE
 }
 
@@ -420,7 +420,7 @@ work_queue() {
 if [[ ${1-} == setup ]]; then
   merge="$AIKIT_SHARE/omarchy/merge-config.py"
   [[ -f $merge ]] || merge="$SELF_DIR/../omarchy/merge-config.py"
-  [[ -f $merge ]] || die "aikit: merge-config.py introuvable"
+  [[ -f $merge ]] || die "aikit: merge-config.py not found"
   exec python3 "$merge" "${@:2}"
 fi
 [[ ${1-} == attach ]] && attach_session

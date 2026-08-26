@@ -1,6 +1,6 @@
 #!/bin/bash
-# Retire AI Kit : liens, unités systemd, entrées Omarchy. Laisse la base et le
-# cache (~/.local/share/aikit/aikit.db, ~/.cache/aikit) — à toi de les effacer.
+# Removes AI Kit: symlinks, systemd units, Omarchy entries. Keeps the database
+# and cache (~/.local/share/aikit/aikit.db, ~/.cache/aikit) — yours to delete.
 set -euo pipefail
 
 systemctl --user disable --now aikit-sync.timer 2>/dev/null || true
@@ -27,4 +27,4 @@ if shell.exists():
     right[:] = [w for w in right if w.get("id") != "aikit"]
     shell.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
 PY
-echo "AI Kit retiré. La base et le cache sont conservés."
+echo "AI Kit removed. The database and cache are kept."

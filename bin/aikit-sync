@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""aikit-sync — tient à jour la base locale que consulte AI Kit.
+"""aikit-sync — keeps the local database that AI Kit reads up to date.
 
-Deux étages, pour ne payer que ce qui sert :
+Three tiers, so you only pay for what you use:
 
-  * étage 1 (deux appels, tous les dépôts) — `gh repo list <owner>` : étoiles,
-    issues et PR ouvertes, dernier push. C'est ce qu'affiche le sélecteur.
-  * étage 2 (un appel par dépôt suivi) — issues et PR détaillées : titres,
-    labels, présence d'un plan d'implémentation, état CI. Seuls les dépôts
-    « suivis » (ouverts au moins une fois par aikit, ou avec une session en
-    cours) sont rafraîchis.
+  * tier 1 (one call per account, every repository) — `gh repo list <owner>`:
+    stars, open issues and PRs, last push. This is what the picker shows.
+  * tier 2 (one call per tracked repository) — detailed issues and PRs: titles,
+    labels, whether an implementation plan is present, CI state. Only *tracked*
+    repositories are refreshed: those opened at least once through aikit, those
+    with a live session, and those showing up in the work queue.
+  * tier 3 (four searches) — the work queue: reviews requested of me, my open
+    PRs, my failing PRs, issues assigned to me — across every repository.
 
-Base : ~/.local/share/aikit/aikit.db
+Database: ~/.local/share/aikit/aikit.db
 
-  aikit-sync              étage 1 + étage 2 des dépôts suivis
-  aikit-sync --repos      étage 1 seulement
-  aikit-sync --repo NWO   étage 2 d'un dépôt (owner/name)
-  aikit-sync --track NWO --path DIR   marque un dépôt comme suivi
-  aikit-sync --status     état de la base
+  aikit-sync              tier 1 + tier 3 + tier 2 of tracked repositories
+  aikit-sync --repos      tier 1 only
+  aikit-sync --repo NWO   tier 2 of one repository (owner/name)
+  aikit-sync --inbox-only tier 3 only
+  aikit-sync --track NWO --path DIR   mark a repository as tracked
+  aikit-sync --status     database state and sync health
 """
 
 import argparse
@@ -311,17 +314,17 @@ def tracked_repos(con, ttl):
 
 def main():
     ap = argparse.ArgumentParser(add_help=True)
-    ap.add_argument("--repos", action="store_true", help="étage 1 seulement")
-    ap.add_argument("--repo", metavar="NWO", help="étage 2 d'un dépôt")
-    ap.add_argument("--track", metavar="NWO", help="marque un dépôt comme suivi")
-    ap.add_argument("--path", metavar="DIR", help="chemin local, avec --track")
-    ap.add_argument("--status", action="store_true", help="état de la base")
-    ap.add_argument("--force", action="store_true", help="ignore la fraîcheur de l'étage 1")
-    ap.add_argument("--inbox-only", action="store_true", help="étage 3 seulement")
+    ap.add_argument("--repos", action="store_true", help="tier 1 only")
+    ap.add_argument("--repo", metavar="NWO", help="tier 2 of one repository")
+    ap.add_argument("--track", metavar="NWO", help="mark a repository as tracked")
+    ap.add_argument("--path", metavar="DIR", help="local path, with --track")
+    ap.add_argument("--status", action="store_true", help="database state and sync health")
+    ap.add_argument("--force", action="store_true", help="ignore tier 1 freshness")
+    ap.add_argument("--inbox-only", action="store_true", help="tier 3 only")
     ap.add_argument("--repo-ttl", type=int, default=600,
-                    help="âge au-delà duquel l'étage 2 d'un dépôt est refait (défaut 600 s)")
+                    help="age after which a repository's tier 2 is redone (default 600 s)")
     ap.add_argument("--repos-ttl", type=int, default=1800,
-                    help="âge au-delà duquel l'étage 1 est refait (défaut 1800 s)")
+                    help="age after which tier 1 is redone (default 1800 s)")
     args = ap.parse_args()
 
     con = db()
@@ -340,47 +343,47 @@ def main():
         prs = con.execute("SELECT COUNT(*) FROM prs").fetchone()[0]
         ts = meta_get(con, "repos_synced_at")
         age = (int(time.time()) - int(ts)) // 60 if ts else None
-        print(f"base      : {DB_PATH}")
-        print(f"dépôts    : {repos} (étage 1{f', il y a {age} min' if age is not None else ''})")
-        print(f"suivis    : {tr}")
+        print(f"database  : {DB_PATH}")
+        print(f"repos     : {repos} (tier 1{f', {age} min ago' if age is not None else ''})")
+        print(f"tracked   : {tr}")
         inbox = con.execute("SELECT COUNT(*) FROM inbox").fetchone()[0]
         print(f"issues/PR : {iss} / {prs}")
-        print(f"à traiter : {inbox}")
+        print(f"queued    : {inbox}")
         ok, streak, err = meta_get(con, "last_ok"), meta_get(con, "fail_streak", "0"), meta_get(con, "last_error")
         if err:
-            print(f"santé     : ÉCHEC ×{streak} — {err}")
+            print(f"health    : FAILING x{streak} — {err}")
         else:
             since = (int(time.time()) - int(ok)) // 60 if ok else None
-            print(f"santé     : ok{f' (dernier succès il y a {since} min)' if since is not None else ''}")
+            print(f"health    : ok{f' (last success {since} min ago)' if since is not None else ''}")
         for nwo, path, used, synced in con.execute(
                 "SELECT nwo, path, last_used, synced_at FROM tracked ORDER BY last_used DESC LIMIT 10"):
-            when = f"{(int(time.time()) - synced) // 60} min" if synced else "jamais"
+            when = f"{(int(time.time()) - synced) // 60} min" if synced else "never"
             print(f"  {nwo:<45} sync {when}")
         return 0
 
     if args.repo:
         res = sync_repo(con, args.repo)
         note_health(con)
-        print(f"{args.repo}: {res[0]} issues, {res[1]} PR" if res else f"{args.repo}: échec", file=sys.stderr)
+        print(f"{args.repo}: {res[0]} issues, {res[1]} PRs" if res else f"{args.repo}: failed", file=sys.stderr)
         return 0 if res else 1
 
     if args.inbox_only:
         n = sync_inbox(con)
         note_health(con)
-        print(f"étage 3 : {n} entrées", file=sys.stderr)
+        print(f"tier 3: {n} entries", file=sys.stderr)
         return 1 if LAST_ERROR else 0
 
     ts = meta_get(con, "repos_synced_at")
     stale = args.force or not ts or (int(time.time()) - int(ts)) > args.repos_ttl
     if stale:
         n = sync_repos(con)
-        print(f"étage 1 : {n} dépôts", file=sys.stderr)
+        print(f"tier 1: {n} repositories", file=sys.stderr)
     else:
-        print("étage 1 : encore frais", file=sys.stderr)
+        print("tier 1: still fresh", file=sys.stderr)
 
     if not args.inbox_only:
         n = sync_inbox(con)
-        print(f"étage 3 : {n} entrées dans la boîte de travail", file=sys.stderr)
+        print(f"tier 3: {n} queue entries", file=sys.stderr)
 
     if not args.repos and not args.inbox_only:
         live = live_sessions()
@@ -390,10 +393,10 @@ def main():
         for nwo, _ in todo:
             res = sync_repo(con, nwo)
             if res:
-                print(f"étage 2 : {nwo} — {res[0]} issues, {res[1]} PR", file=sys.stderr)
+                print(f"tier 2: {nwo} — {res[0]} issues, {res[1]} PRs", file=sys.stderr)
     note_health(con)
     if LAST_ERROR:
-        print(f"santé : {LAST_ERROR}", file=sys.stderr)
+        print(f"health: {LAST_ERROR}", file=sys.stderr)
         return 1
     return 0
 
