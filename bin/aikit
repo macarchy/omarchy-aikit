@@ -77,6 +77,7 @@ AIKIT_CLAUDE_FLAGS=${AIKIT_CLAUDE_FLAGS:---permission-mode acceptEdits}
 AIKIT_CACHE=${AIKIT_CACHE:-$HOME/.cache/aikit}
 AIKIT_STATE_DIR="$AIKIT_CACHE/state"
 AIKIT_SORT_FILE="$AIKIT_CACHE/sort"
+AIKIT_SEED_STAMP="$AIKIT_CACHE/seeded"   # dernière tentative d'amorçage
 # La base est une donnée, pas une ressource : elle vit dans le dossier de
 # données, comme chez aikit-sync et aikit-status. La chercher à côté de rows.py
 # la rendait « absente » à chaque lancement dès que les ressources venaient
@@ -232,6 +233,7 @@ if [[ ${1-} == --run ]]; then
 fi
 
 if [[ ${1-} == sync ]]; then
+  rm -f "$AIKIT_SEED_STAMP"        # geste explicite : on repart d'une ardoise nette
   exec omarchy-launch-tui --app-id=org.omarchy.aikit \
     bash -c "aikit-sync --force; aikit-sync --status; read -n1 -r"
 fi
@@ -433,9 +435,27 @@ fi
 [[ ${1-} == work ]] && work_queue
 
 # Base absente ou vide : on l'amorce plutôt que d'afficher « ? » partout.
-if [[ ! -f $AIKIT_DB ]] || [[ -z $(sqlite3 "$AIKIT_DB" "SELECT 1 FROM repos LIMIT 1" 2>/dev/null) ]]; then
-  notify "$(t first_run)"
-  command -v aikit-sync >/dev/null && aikit-sync --repos --force >/dev/null 2>&1 || true
+# Anti-rebond : quand l'amorçage échoue (gh non authentifié, réseau coupé), la
+# base reste vide — sans horodatage, chaque clic dans la barre repartirait pour
+# une synchronisation bloquante et une notification de plus. On ne retente donc
+# qu'après AIKIT_SEED_RETRY_SECS, et l'échec se dit une fois par fenêtre.
+db_empty() { [[ ! -f $AIKIT_DB ]] || [[ -z $(sqlite3 "$AIKIT_DB" "SELECT 1 FROM repos LIMIT 1" 2>/dev/null) ]]; }
+
+if db_empty; then
+  seed_last=0
+  [[ -f $AIKIT_SEED_STAMP ]] && seed_last=$(<"$AIKIT_SEED_STAMP")
+  [[ $seed_last =~ ^[0-9]+$ ]] || seed_last=0          # horodatage abîmé : on retente
+  seed_now=$(date +%s)
+  if (( seed_now - seed_last >= ${AIKIT_SEED_RETRY_SECS:-600} )); then
+    mkdir -p "$AIKIT_CACHE" && printf '%s\n' "$seed_now" > "$AIKIT_SEED_STAMP"
+    notify "$(t first_run)"
+    command -v aikit-sync >/dev/null && aikit-sync --repos --force >/dev/null 2>&1 || true
+    if db_empty; then
+      notify "$(t first_run_failed)"
+    else
+      rm -f "$AIKIT_SEED_STAMP"   # amorcée : une base vidée plus tard repart aussitôt
+    fi
+  fi
 fi
 
 # --- parcours : dépôt d'abord, skill ensuite --------------------------------

@@ -116,7 +116,10 @@ printf 'LAUNCH|%s\n' "$*"
 STUB
 printf '#!/bin/bash\nprintf "WEBAPP|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-webapp"
 printf '#!/bin/bash\nprintf "ATTACH|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-tui"
-printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/notify-send"
+cat > "$sandbox/bin/notify-send" <<STUB
+#!/bin/bash
+printf '%s\n' "\$*" >> "$sandbox/notifylog"
+STUB
 cat > "$sandbox/bin/aikit-sync" <<STUB
 #!/bin/bash
 printf '%s\n' "\$*" >> "$sandbox/synclog"
@@ -277,7 +280,7 @@ check "ligne « Back » dans la liste des issues → menu des skills" \
 out=$(flow "cancel")
 check "Échap au choix du dépôt → on sort" "" "$(launched "$out")"
 
-# --- 5. la base est cherchée dans le dossier de données ---------------------
+# --- 5. la base : où on la cherche, et quand on l'amorce -------------------
 # Régression : AIKIT_DB était déduit du dossier des ressources. Dès que celui-ci
 # n'était pas ~/.local/share/aikit (paquet en /usr/share, copie de travail), la
 # base paraissait absente et chaque lancement la réamorçait — un « premier
@@ -292,6 +295,26 @@ FLOW_DB="$sandbox/data/aikit.db" FLOW_ENV=()
 check "sans AIKIT_DB : base lue dans le dossier de données" \
       "$sandbox/repos/alpha /ai-migration-kit:migrate-assess" "$(launched "$out")"
 check "base peuplée : aucun réamorçage" "0" "$(grep -c -- "--repos --force" "$sandbox/synclog")"
+
+# Anti-rebond : un amorçage qui échoue (gh non authentifié, réseau coupé) laisse
+# la base vide. Sans horodatage, le clic suivant repartait pour une
+# synchronisation bloquante et une notification de plus — à chaque clic.
+echo "Amorçage"
+mkdir -p "$sandbox/vide"
+FLOW_DB="$sandbox/vide/aikit.db"          # base absente : le garde-fou se déclenche
+rm -f "$sandbox/cache/seeded"
+: > "$sandbox/synclog"; : > "$sandbox/notifylog"
+flow "cancel" >/dev/null
+check "base absente : un amorçage" "1" "$(grep -c -- "--repos --force" "$sandbox/synclog")"
+check "échec dit une fois" "1" "$(grep -c "Could not fill" "$sandbox/notifylog")"
+flow "cancel" >/dev/null
+check "clic suivant : pas de second amorçage" "1" "$(grep -c -- "--repos --force" "$sandbox/synclog")"
+check "clic suivant : pas de seconde notification" "1" "$(grep -c "Could not fill" "$sandbox/notifylog")"
+FLOW_ENV=("AIKIT_SEED_RETRY_SECS=0")
+flow "cancel" >/dev/null
+FLOW_ENV=()
+check "fenêtre écoulée : on retente" "2" "$(grep -c -- "--repos --force" "$sandbox/synclog")"
+FLOW_DB="$sandbox/data/aikit.db"
 
 # --- 6. compteurs -----------------------------------------------------------
 echo "Compteurs"
