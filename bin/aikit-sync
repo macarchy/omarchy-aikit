@@ -32,8 +32,9 @@ import subprocess
 import sys
 import time
 
-DB_PATH = pathlib.Path(os.environ.get("AIKIT_DB") or
-                       pathlib.Path.home() / ".local/share/aikit/aikit.db")
+DATA_DIR = pathlib.Path(os.environ.get("XDG_DATA_HOME") or
+                        pathlib.Path.home() / ".local/share") / "aikit"
+DB_PATH = pathlib.Path(os.environ.get("AIKIT_DB") or DATA_DIR / "aikit.db")
 TRACK_TTL = 30 * 86400          # un dépôt reste « suivi » 30 jours après usage
 FAILED = {"FAILURE", "TIMED_OUT", "CANCELLED", "ERROR"}
 RUNNING = {"IN_PROGRESS", "QUEUED", "PENDING", "WAITING"}
