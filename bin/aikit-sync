@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS prs (
   ci TEXT, conflicting INTEGER, updated_at TEXT, PRIMARY KEY (nwo, number)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS inbox (
+  kind TEXT, nwo TEXT, number INTEGER, title TEXT, draft INTEGER,
+  ci TEXT, updated_at TEXT, PRIMARY KEY (kind, nwo, number)
+);
 """
 
 
@@ -60,6 +64,10 @@ def db():
     con = sqlite3.connect(DB_PATH, timeout=30)
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(SCHEMA)
+    try:                                  # colonne ajoutée après coup
+        con.execute("ALTER TABLE repos ADD COLUMN local_path TEXT")
+    except sqlite3.OperationalError:
+        pass
     return con
 
 
@@ -122,6 +130,28 @@ def ci_state(checks):
     return "ok"
 
 
+def local_clones():
+    """Associe chaque dépôt distant à son clone local : « owner/name » → chemin.
+    C'est ce qui permet à la boîte de travail transversale d'ouvrir une session
+    au bon endroit, sans redemander le dépôt."""
+    roots = os.environ.get("AIKIT_ROOTS") or " ".join(
+        str(pathlib.Path.home() / d) for d in ("Data/Repositories", "Work", "Projects"))
+    found = {}
+    for root in roots.split():
+        base = pathlib.Path(root)
+        if not base.is_dir():
+            continue
+        for cfg in base.glob("*/*/*/.git/config"):
+            try:
+                text = cfg.read_text(errors="ignore")
+            except OSError:
+                continue
+            m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?\s", text)
+            if m:
+                found.setdefault("%s/%s" % (m.group(1), m.group(2)), str(cfg.parent.parent))
+    return found
+
+
 def local_owners():
     """Comptes lus dans les remotes des clones locaux (AIKIT_ROOTS)."""
     roots = os.environ.get("AIKIT_ROOTS") or " ".join(
@@ -173,8 +203,39 @@ def sync_repos(con):
               (r.get("pullRequests") or {}).get("totalCount", 0), r.get("pushedAt"), now)
              for r in data])
         total += len(data)
+    for nwo, path in local_clones().items():
+        con.execute("UPDATE repos SET local_path = ? WHERE nwo = ?", (path, nwo))
     meta_set(con, repos_synced_at=int(time.time()))
     return total
+
+
+def sync_inbox(con):
+    """Étage 3 — ce qui me concerne, tous dépôts confondus (4 recherches)."""
+    rows = []
+
+    def add(kind, items, ci="", bots=False):
+        for it in items or []:
+            login = ((it.get("author") or {}).get("login") or "")
+            if not bots and login.endswith("[bot]"):
+                continue
+            rows.append((kind, it["repository"]["nameWithOwner"], it["number"], it["title"],
+                         int(bool(it.get("isDraft"))), ci, it.get("updatedAt")))
+
+    add("review", gh(["search", "prs", "--review-requested=@me", "--state=open", "--limit", "50",
+                      "--json", "repository,number,title,updatedAt,isDraft,author"]))
+    add("mine", gh(["search", "prs", "--author=@me", "--state=open", "--limit", "50",
+                    "--json", "repository,number,title,updatedAt,isDraft"]))
+    add("failing", gh(["search", "prs", "status:failure", "--author=@me", "--state=open",
+                       "--limit", "50", "--json", "repository,number,title,updatedAt,isDraft"]), ci="fail")
+    add("assigned", gh(["search", "issues", "--assignee=@me", "--state=open", "--limit", "50",
+                        "--json", "repository,number,title,updatedAt"]))
+
+    if not rows:
+        return 0
+    con.execute("DELETE FROM inbox")
+    con.executemany("INSERT OR REPLACE INTO inbox VALUES (?,?,?,?,?,?,?)", rows)
+    meta_set(con, inbox_synced_at=int(time.time()))
+    return len(rows)
 
 
 def sync_repo(con, nwo):
@@ -236,6 +297,7 @@ def main():
     ap.add_argument("--path", metavar="DIR", help="chemin local, avec --track")
     ap.add_argument("--status", action="store_true", help="état de la base")
     ap.add_argument("--force", action="store_true", help="ignore la fraîcheur de l'étage 1")
+    ap.add_argument("--inbox-only", action="store_true", help="étage 3 seulement")
     ap.add_argument("--repos-ttl", type=int, default=1800,
                     help="âge au-delà duquel l'étage 1 est refait (défaut 1800 s)")
     args = ap.parse_args()
@@ -259,7 +321,9 @@ def main():
         print(f"base      : {DB_PATH}")
         print(f"dépôts    : {repos} (étage 1{f', il y a {age} min' if age is not None else ''})")
         print(f"suivis    : {tr}")
+        inbox = con.execute("SELECT COUNT(*) FROM inbox").fetchone()[0]
         print(f"issues/PR : {iss} / {prs}")
+        print(f"à traiter : {inbox}")
         ok, streak, err = meta_get(con, "last_ok"), meta_get(con, "fail_streak", "0"), meta_get(con, "last_error")
         if err:
             print(f"santé     : ÉCHEC ×{streak} — {err}")
@@ -278,6 +342,12 @@ def main():
         print(f"{args.repo}: {res[0]} issues, {res[1]} PR" if res else f"{args.repo}: échec", file=sys.stderr)
         return 0 if res else 1
 
+    if args.inbox_only:
+        n = sync_inbox(con)
+        note_health(con)
+        print(f"étage 3 : {n} entrées", file=sys.stderr)
+        return 1 if LAST_ERROR else 0
+
     ts = meta_get(con, "repos_synced_at")
     stale = args.force or not ts or (int(time.time()) - int(ts)) > args.repos_ttl
     if stale:
@@ -286,7 +356,11 @@ def main():
     else:
         print("étage 1 : encore frais", file=sys.stderr)
 
-    if not args.repos:
+    if not args.inbox_only:
+        n = sync_inbox(con)
+        print(f"étage 3 : {n} entrées dans la boîte de travail", file=sys.stderr)
+
+    if not args.repos and not args.inbox_only:
         live = live_sessions()
         todo = tracked_repos(con)
         # les dépôts avec une session en cours d'abord

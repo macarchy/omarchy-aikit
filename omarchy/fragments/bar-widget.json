@@ -6,5 +6,5 @@
   "tooltip": "AI Kit",
   "onClick": "/home/phmatray/.local/bin/aikit",
   "onRightClick": "/home/phmatray/.local/bin/aikit attach",
-  "onMiddleClick": "/home/phmatray/.local/bin/aikit auto-dev"
+  "onMiddleClick": "/home/phmatray/.local/bin/aikit work"
 }

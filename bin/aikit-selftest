@@ -36,12 +36,14 @@ mkrepo "beta project"     "acme/beta"         "2026-08-25 12:00"   # espace dans
 mkrepo "gamma · delta"    "acme/gamma"        "2026-08-24 12:00"   # le séparateur des sous-titres
 mkrepo "local-only"       -                   "2026-08-23 12:00"   # pas de remote GitHub
 
-python3 - "$sandbox/share/aikit.db" <<'PY'
+python3 - "$sandbox/share/aikit.db" "$sandbox/repos" <<'PY'
 import sqlite3, sys, time
 con = sqlite3.connect(sys.argv[1])
 con.executescript(open('/dev/stdin').read() if False else """
 CREATE TABLE repos (nwo TEXT PRIMARY KEY, owner TEXT, name TEXT, stars INTEGER, open_issues INTEGER,
-                    open_prs INTEGER, pushed_at TEXT, synced_at INTEGER);
+                    open_prs INTEGER, pushed_at TEXT, synced_at INTEGER, local_path TEXT);
+CREATE TABLE inbox (kind TEXT, nwo TEXT, number INTEGER, title TEXT, draft INTEGER, ci TEXT,
+                    updated_at TEXT, PRIMARY KEY (kind, nwo, number));
 CREATE TABLE tracked (nwo TEXT PRIMARY KEY, path TEXT, last_used INTEGER, synced_at INTEGER);
 CREATE TABLE issues (nwo TEXT, number INTEGER, title TEXT, labels TEXT, planned INTEGER,
                      assigned INTEGER, updated_at TEXT, PRIMARY KEY (nwo, number));
@@ -50,10 +52,17 @@ CREATE TABLE prs (nwo TEXT, number INTEGER, title TEXT, labels TEXT, draft INTEG
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 """)
 now = int(time.time())
-con.executemany("INSERT INTO repos VALUES (?,?,?,?,?,?,?,?)", [
-    ("acme/alpha", "acme", "alpha", 5, 2, 1, "2026-08-26T10:00:00Z", now),
-    ("acme/beta",  "acme", "beta", 90, 7, 0, "2026-08-20T10:00:00Z", now),
-    ("acme/gamma", "acme", "gamma", 0, 40, 3, "2026-08-24T10:00:00Z", now),
+root = sys.argv[2]
+con.executemany("INSERT INTO repos VALUES (?,?,?,?,?,?,?,?,?)", [
+    ("acme/alpha", "acme", "alpha", 5, 2, 1, "2026-08-26T10:00:00Z", now, root + "/alpha"),
+    ("acme/beta",  "acme", "beta", 90, 7, 0, "2026-08-20T10:00:00Z", now, root + "/beta project"),
+    ("acme/gamma", "acme", "gamma", 0, 40, 3, "2026-08-24T10:00:00Z", now, root + "/gamma · delta"),
+    ("acme/remote-only", "acme", "remote", 0, 1, 1, "2026-08-26T10:00:00Z", now, ""),
+])
+con.executemany("INSERT INTO inbox VALUES (?,?,?,?,?,?,?)", [
+    ("failing",  "acme/alpha", 77, "#111 fix the thing", 0, "fail", "2026-08-26T10:00:00Z"),
+    ("assigned", "acme/beta", 5, "do the needful", 0, "", "2026-08-25T10:00:00Z"),
+    ("mine",     "acme/remote-only", 9, "no clone here", 0, "", "2026-08-26T10:00:00Z"),
 ])
 con.execute("INSERT INTO tracked VALUES ('acme/alpha', '', ?, ?)", (now, now))
 con.executemany("INSERT INTO issues VALUES (?,?,?,?,?,?,?)", [
@@ -97,19 +106,22 @@ cat > "$sandbox/bin/omarchy-launch-tui" <<'STUB'
 #!/bin/bash
 printf 'LAUNCH|%s\n' "$*"
 STUB
+printf '#!/bin/bash\nprintf "WEBAPP|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-webapp"
 printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/notify-send"
 printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/aikit-sync"
 printf '#!/bin/bash\nexit 1\n' > "$sandbox/bin/tmux"          # jamais de session en cours
 chmod +x "$sandbox"/bin/*
 
 # --- utilitaires ------------------------------------------------------------
-flow() { # flow <choix...> -> sortie d'aikit (dont la ligne LAUNCH)
+flow() { # flow [--args <arg>] <choix...> -> sortie d'aikit (dont la ligne LAUNCH)
+  local args=()
+  while [[ ${1-} == --args ]]; do args+=("$2"); shift 2; done
   printf '%s\n' "$@" > "$sandbox/picks"; rm -f "$sandbox/picks.n"
   PATH="$sandbox/bin:$HOME/.local/bin:$PATH" \
   PICKS="$sandbox/picks" TRACE="${VERBOSE:+$sandbox/trace}" \
   AIKIT_SHARE="$sandbox/share" AIKIT_DB="$sandbox/share/aikit.db" \
   AIKIT_CACHE="$sandbox/cache" AIKIT_ROOTS="$sandbox/repos" AIKIT_LANG=en \
-    ${AIKIT_XTRACE:+bash -x} "$HOME/.local/bin/aikit" 2>"$sandbox/err"
+    ${AIKIT_XTRACE:+bash -x} "$HOME/.local/bin/aikit" "${args[@]}" 2>"$sandbox/err"
   [[ -n ${AIKIT_DEBUG:-} ]] && { echo "--- err ---" >&2; cat "$sandbox/err" >&2; }
 }
 
@@ -170,6 +182,20 @@ out=$(flow "match:alpha" "match:Merge a PR" "match:#111 fix")
 check "PR : idem" "/ai-migration-kit:merge-pr 77" \
       "$(launched "$out" | sed 's#^[^ ]* ##')"
 
+# --- 4 bis. file de travail transversale ------------------------------------
+echo "File de travail"
+out=$(flow --args work "match:#77 #111 fix")
+check "PR en CI rouge → merge-pr dans le bon clone" \
+      "$sandbox/repos/alpha /ai-migration-kit:merge-pr 77" "$(launched "$out")"
+
+out=$(flow --args work "match:#5 do the needful")
+check "issue assignée → implement-issue, autre dépôt, sans redemander le dépôt" \
+      "$sandbox/repos/beta project /ai-migration-kit:implement-issue 5" "$(launched "$out")"
+
+out=$(flow --args work "match:#9 no clone here")
+check "sans clone local → ouverture sur GitHub" \
+      "WEBAPP|GitHub https://github.com/acme/remote-only/pull/9" "$(grep '^WEBAPP|' <<<"$out")"
+
 # --- 5. compteurs -----------------------------------------------------------
 echo "Compteurs"
 eval "$(python3 "$sandbox/share/rows.py" counts "$sandbox/share/aikit.db" acme/alpha)"
@@ -188,6 +214,7 @@ used=$( {
     printf 'ci_ok\nci_fail\nci_pending\nci_none\n'
     printf 'sort_recent\nsort_pushed\nsort_name\nsort_stars\nsort_issues\nsort_prs\n'
     printf 'no_repo\nno_repo_gh\n'
+    printf 'kind_failing\nkind_review\nkind_mine\nkind_assigned\nkind_planned\n'
   } | sort -u )
 
 for lang in en fr; do

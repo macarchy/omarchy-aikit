@@ -13,6 +13,24 @@ SUPER + CTRL + M   ou   clic sur 󱓞 dans la barre
   → tmux + claude "/ai-migration-kit:<skill> …"
 ```
 
+## File de travail
+
+`aikit work` (clic milieu sur 󱓞, ou « AI Kit · work queue » dans le menu) répond à
+« sur quoi je bosse ? » **sans choisir de dépôt** : une seule liste, tous dépôts
+confondus, dans l'ordre où ça compte.
+
+```
+  #433 Per-exam accommodation opt-in…     CI failing · Atypical-Consulting/Lectio · 2 months ago
+  #217 fix(loader): standalone project…   review requested · Atypical-Consulting/RoselineMCP · 4h ago
+ᛦ #218 fix(website): per-kind tool counts your PR · Atypical-Consulting/RoselineMCP · just now
+⊙ #61  Wire the audit marker              assigned to you · phmatray/Koine · 2d ago
+✔ #271 Lever 4 never priced the top tier  planned, ready to build · phmatray/ai-migration-kit · 2d ago
+```
+
+Choisir une ligne ouvre directement la bonne session dans le bon clone :
+`merge-pr` pour une PR à toi, `/code-review` pour une review demandée,
+`implement-issue` pour une issue. Sans clone local, la page GitHub s'ouvre.
+
 ## Installation
 
 ```bash
@@ -47,6 +65,10 @@ Prérequis : `gh` authentifié, `tmux`, `jq`, `python3`, `sqlite3`, Omarchy.
 * **étage 2** — issues et PR détaillées (titres, labels, plan d'implémentation,
   état CI) des seuls dépôts *suivis* : ceux ouverts au moins une fois par aikit,
   pendant 30 jours.
+
+* **étage 3** — la boîte de travail : quatre recherches GitHub (`review-requested`,
+  `author:@me`, `status:failure`, `assignee:@me`) qui couvrent *tous* les dépôts,
+  plus les issues planifiées et calibrées des dépôts suivis.
 
 `aikit-sync --status` affiche l'âge des données et la santé de la synchronisation.
 Une panne (jeton expiré, réseau coupé) est consignée dans la base et remonte dans

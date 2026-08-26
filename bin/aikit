@@ -3,6 +3,7 @@
 # aikit — lance une skill de l'AI Migration Kit sur un dépôt, depuis le GUI.
 #
 #   aikit                    dépôt → skill → paramètres (parcours principal)
+#   aikit work               ce qui m'attend, tous dépôts confondus
 #   aikit <skill>            raccourci : skill imposée, dépôt demandé
 #   aikit attach             réattache une session aikit en cours
 #   aikit sync               force une synchronisation de la base
@@ -228,7 +229,46 @@ attach_session() {
   exec omarchy-launch-or-focus-tui --app-id=org.omarchy.aikit "tmux attach -t $sel"
 }
 
+launch() { # <titre> <dépôt> <prompt>
+  local title="$1" repo="$2" prompt="$3" session
+  session="aikit-$(slug_of "$repo")"
+  mkdir -p "$AIKIT_CACHE/notified"
+  rm -f "$AIKIT_CACHE/notified/$session"
+  notify "$title" "$(basename "$repo")  ·  tmux: $session"
+  exec omarchy-launch-tui --app-id=org.omarchy.aikit \
+    "$HOME/.local/bin/aikit" --exec "$session" "$repo" "$prompt"
+}
+
+# --- boîte de travail transversale ------------------------------------------
+# La clé d'une ligne porte tout ce qu'il faut pour agir : genre, dépôt distant,
+# numéro et clone local. Plus besoin de repasser par le choix du dépôt.
+work_queue() {
+  local rows=() key kind nwo number path skill prompt
+  mapfile -t rows < <(python3 "$ROWS" inbox "$AIKIT_DB")
+  ((${#rows[@]})) || die "$(t inbox_empty)"
+  MENU_ARGS=(--width 980 --height 600)
+  key=$(menu_pick "$(t inbox_prompt)" "${rows[@]}") || exit 0
+  [[ -n $key ]] || exit 0
+  IFS='|' read -r kind nwo number path <<<"$key"
+
+  if [[ -z $path || ! -d $path ]]; then      # pas de clone : on ouvre sur GitHub
+    local url="https://github.com/$nwo/issues/$number"
+    [[ $kind == assigned || $kind == planned ]] || url="https://github.com/$nwo/pull/$number"
+    notify "$(t inbox_nolocal)" "$nwo#$number"
+    exec omarchy-launch-or-focus-webapp "GitHub" "$url"
+  fi
+
+  case "$kind" in
+    failing|mine) skill="merge-pr"        prompt="/ai-migration-kit:merge-pr $number" ;;
+    review)       skill="code-review"     prompt="/code-review $number" ;;
+    *)            skill="implement-issue" prompt="/ai-migration-kit:implement-issue $number" ;;
+  esac
+  aikit-sync --track "$nwo" --path "$path" 2>/dev/null || true
+  launch "$skill #$number" "$path" "$prompt"
+}
+
 [[ ${1-} == attach ]] && attach_session
+[[ ${1-} == work ]] && work_queue
 
 # --- parcours : dépôt d'abord, skill ensuite --------------------------------
 skill=${1-}; shift 2>/dev/null || true
@@ -250,16 +290,6 @@ if [[ -z $skill ]]; then
   [[ -n $skill ]] || exit 0
   [[ $skill == __attach ]] && attach_session "aikit-$(slug_of "$repo")"
 fi
-
-launch() { # <titre> <dépôt> <prompt>
-  local title="$1" repo="$2" prompt="$3" session
-  session="aikit-$(slug_of "$repo")"
-  mkdir -p "$AIKIT_CACHE/notified"
-  rm -f "$AIKIT_CACHE/notified/$session"
-  notify "$title" "$(basename "$repo")  ·  tmux: $session"
-  exec omarchy-launch-tui --app-id=org.omarchy.aikit \
-    "$HOME/.local/bin/aikit" --exec "$session" "$repo" "$prompt"
-}
 
 case "$skill" in
   auto-dev)

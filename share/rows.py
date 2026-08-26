@@ -9,6 +9,7 @@ chemin ou un numéro à partir du texte montré à l'utilisateur.
 
   rows.py repos  <db>          chemins sur l'entrée standard
   rows.py counts <db> <nwo>    compteurs shell (ISSUES=…, ELIGIBLE=…, AGE=…)
+  rows.py inbox  <db>          ce qui m'attend, tous dépôts confondus
   rows.py issues <db> <nwo>
   rows.py prs    <db> <nwo>
 """
@@ -216,10 +217,58 @@ def cmd_prs(db, nwo):
         print(row)
 
 
+G_REVIEW = "\uf06e"        # 👁 review demandée
+G_ASSIGNED = G_ISSUE       # ⊙  issue
+
+# Ordre d'urgence : ce qui casse, puis ce qui bloque quelqu'un d'autre, puis moi.
+KIND_RANK = {"failing": 0, "review": 1, "mine": 2, "assigned": 3, "planned": 4}
+KIND_GLYPH = {"failing": G_CI["fail"], "review": G_REVIEW, "mine": G_PR,
+              "assigned": G_ASSIGNED, "planned": G_PLANNED}
+
+
+def cmd_inbox(db):
+    """Une ligne par chose à faire, tous dépôts confondus. La clé porte de quoi
+    agir sans repasser par le choix du dépôt : "<genre>|<nwo>|<numéro>|<chemin>"."""
+    c = con(db)
+    paths = {r["nwo"]: (r["local_path"] or "") for r in c.execute(
+        "SELECT nwo, local_path FROM repos")}
+
+    seen, rows = set(), []
+    def push(kind, nwo, number, title, draft, updated):
+        if (nwo, number) in seen:          # une PR en échec ne s'affiche qu'une fois
+            return
+        seen.add((nwo, number))
+        bits = [T("kind_" + kind)]
+        if draft:
+            bits.append(T("row_draft"))
+        bits.append(nwo)
+        bits.append(ago(updated))
+        rows.append(((KIND_RANK[kind], updated and -1 or 0, nwo, -number),
+                     "%s|%s|%d|%s\t%s\t%s\t%s" % (
+                         kind, nwo, number, paths.get(nwo, ""),
+                         KIND_GLYPH[kind], "#%d %s" % (number, short(title, 68)),
+                         " · ".join(b for b in bits if b))))
+
+    for kind in ("failing", "review", "mine", "assigned"):
+        for r in c.execute("SELECT * FROM inbox WHERE kind = ?", (kind,)):
+            push(kind, r["nwo"], r["number"], r["title"], r["draft"], r["updated_at"])
+
+    # les issues planifiées et calibrées des dépôts suivis : du travail prêt à démarrer
+    for r in c.execute("""SELECT i.* FROM issues i JOIN tracked t ON t.nwo = i.nwo
+                          WHERE i.planned = 1"""):
+        if set(json.loads(r["labels"])) & {"effort: small", "effort: medium"}:
+            push("planned", r["nwo"], r["number"], r["title"], 0, r["updated_at"])
+
+    for _, row in sorted(rows):
+        print(row)
+
+
 if __name__ == "__main__":
     cmd, db = sys.argv[1], sys.argv[2]
     if cmd == "repos":
         cmd_repos(db, sys.argv[3] if len(sys.argv) > 3 else "recent")
+    elif cmd == "inbox":
+        cmd_inbox(db)
     elif cmd == "counts":
         cmd_counts(db, sys.argv[3])
     elif cmd == "issues":
