@@ -77,7 +77,13 @@ AIKIT_CLAUDE_FLAGS=${AIKIT_CLAUDE_FLAGS:---permission-mode acceptEdits}
 AIKIT_CACHE=${AIKIT_CACHE:-$HOME/.cache/aikit}
 AIKIT_STATE_DIR="$AIKIT_CACHE/state"
 AIKIT_SORT_FILE="$AIKIT_CACHE/sort"
-AIKIT_DB=${AIKIT_DB:-$AIKIT_SHARE/aikit.db}
+# La base est une donnée, pas une ressource : elle vit dans le dossier de
+# données, comme chez aikit-sync et aikit-status. La chercher à côté de rows.py
+# la rendait « absente » à chaque lancement dès que les ressources venaient
+# d'ailleurs (/usr/share en lecture seule, ou une copie de travail du dépôt) :
+# le lanceur réamorçait alors la base à chaque clic dans la barre.
+AIKIT_DATA=${AIKIT_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/aikit}
+AIKIT_DB=${AIKIT_DB:-$AIKIT_DATA/aikit.db}
 ROWS="$AIKIT_SHARE/rows.py"
 
 # Glyphes en points de code : un glyphe collé ne survit pas toujours au trajet

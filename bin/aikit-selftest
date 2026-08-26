@@ -28,7 +28,7 @@ sandbox=$(mktemp -d) || exit 1
 [[ -n ${AIKIT_KEEP:-} ]] || trap 'rm -rf "$sandbox"' EXIT
 
 # --- bac à sable ------------------------------------------------------------
-mkdir -p "$sandbox"/{bin,share,cache,repos}
+mkdir -p "$sandbox"/{bin,share,data,cache,repos}
 ln -s "$SHARE/rows.py" "$SHARE/i18n.sh" "$SHARE/strings.json" "$sandbox/share/"
 
 mkrepo() { # mkrepo <chemin relatif> <owner/name|->
@@ -44,7 +44,7 @@ mkrepo "gamma · delta"    "acme/gamma"        "2026-08-24 12:00"   # le sépara
 mkrepo "local-only"       -                   "2026-08-23 12:00"   # pas de remote GitHub
 mkrepo "dup/alpha"        "other/alpha"       "2026-08-22 12:00"   # même nom de dossier, autre propriétaire
 
-python3 - "$sandbox/share/aikit.db" "$sandbox/repos" <<'PY'
+python3 - "$sandbox/data/aikit.db" "$sandbox/repos" <<'PY'
 import sqlite3, sys, time
 con = sqlite3.connect(sys.argv[1])
 con.executescript(open('/dev/stdin').read() if False else """
@@ -117,7 +117,10 @@ STUB
 printf '#!/bin/bash\nprintf "WEBAPP|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-webapp"
 printf '#!/bin/bash\nprintf "ATTACH|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-tui"
 printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/notify-send"
-printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/aikit-sync"
+cat > "$sandbox/bin/aikit-sync" <<STUB
+#!/bin/bash
+printf '%s\n' "\$*" >> "$sandbox/synclog"
+STUB
 # tmux bouchonné : les sessions « vivantes » sont les lignes de $sandbox/sessions
 cat > "$sandbox/bin/tmux" <<'STUB'
 #!/bin/bash
@@ -134,14 +137,19 @@ chmod +x "$sandbox/bin/tmux"
 chmod +x "$sandbox"/bin/*
 
 # --- utilitaires ------------------------------------------------------------
+FLOW_DB="$sandbox/data/aikit.db"   # base imposée au lanceur ; vide = son propre défaut
+FLOW_ENV=()                        # surcharges d'environnement d'un test (voir « Base »)
 flow() { # flow [--args <arg>] <choix...> -> sortie d'aikit (dont la ligne LAUNCH)
-  local args=()
+  local args=() db=()
   while [[ ${1-} == --args ]]; do args+=("$2"); shift 2; done
+  [[ -n $FLOW_DB ]] && db=("AIKIT_DB=$FLOW_DB")
   printf '%s\n' "$@" > "$sandbox/picks"; rm -f "$sandbox/picks.n"
+  env -u AIKIT_DB -u XDG_DATA_HOME \
   PATH="$sandbox/bin:$HOME/.local/bin:$PATH" \
   PICKS="$sandbox/picks" TRACE="${VERBOSE:+$sandbox/trace}" SESSIONS="$sandbox/sessions" \
-  AIKIT_SHARE="$sandbox/share" AIKIT_DB="$sandbox/share/aikit.db" \
+  AIKIT_SHARE="$sandbox/share" \
   AIKIT_CACHE="$sandbox/cache" AIKIT_ROOTS="$sandbox/repos" AIKIT_LANG=en \
+  "${db[@]}" "${FLOW_ENV[@]}" \
     ${AIKIT_XTRACE:+bash -x} "$AIKIT_BIN" "${args[@]}" 2>"$sandbox/err"
   [[ -n ${AIKIT_DEBUG:-} ]] && { echo "--- err ---" >&2; cat "$sandbox/err" >&2; }
 }
@@ -269,14 +277,30 @@ check "ligne « Back » dans la liste des issues → menu des skills" \
 out=$(flow "cancel")
 check "Échap au choix du dépôt → on sort" "" "$(launched "$out")"
 
-# --- 5. compteurs -----------------------------------------------------------
+# --- 5. la base est cherchée dans le dossier de données ---------------------
+# Régression : AIKIT_DB était déduit du dossier des ressources. Dès que celui-ci
+# n'était pas ~/.local/share/aikit (paquet en /usr/share, copie de travail), la
+# base paraissait absente et chaque lancement la réamorçait — un « premier
+# lancement » à chaque clic dans la barre.
+echo "Base"
+mkdir -p "$sandbox/xdg/aikit"
+cp "$sandbox/data/aikit.db" "$sandbox/xdg/aikit/aikit.db"
+: > "$sandbox/synclog"
+FLOW_DB="" FLOW_ENV=("XDG_DATA_HOME=$sandbox/xdg")
+out=$(flow "match:	alpha	" "match:Legacy audit")
+FLOW_DB="$sandbox/data/aikit.db" FLOW_ENV=()
+check "sans AIKIT_DB : base lue dans le dossier de données" \
+      "$sandbox/repos/alpha /ai-migration-kit:migrate-assess" "$(launched "$out")"
+check "base peuplée : aucun réamorçage" "0" "$(grep -c -- "--repos --force" "$sandbox/synclog")"
+
+# --- 6. compteurs -----------------------------------------------------------
 echo "Compteurs"
-eval "$(python3 "$sandbox/share/rows.py" counts "$sandbox/share/aikit.db" acme/alpha)"
+eval "$(python3 "$sandbox/share/rows.py" counts "$sandbox/data/aikit.db" acme/alpha)"
 check "dépôt suivi : 2 issues, 1 planifiée, 1 éligible" "2 1 1" "$ISSUES $PLANNED $ELIGIBLE"
-eval "$(python3 "$sandbox/share/rows.py" counts "$sandbox/share/aikit.db" acme/beta)"
+eval "$(python3 "$sandbox/share/rows.py" counts "$sandbox/data/aikit.db" acme/beta)"
 check "dépôt non détaillé : totaux étage 1, détail inconnu" "7 -1 -1" "$ISSUES $PLANNED $ELIGIBLE"
 
-# --- 6. le catalogue couvre toutes les clés utilisées -----------------------
+# --- 7. le catalogue couvre toutes les clés utilisées -----------------------
 echo "Chaînes"
 used=$( {
     # les clés littérales : toutes passent par $(t clé) ou T("clé")
