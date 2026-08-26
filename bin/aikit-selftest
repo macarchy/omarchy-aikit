@@ -1,0 +1,209 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# aikit-selftest — joue les parcours d'AI Kit sur un bac à sable.
+#
+# Aucun réseau, aucune fenêtre, aucune session tmux : les commandes du bureau
+# (omarchy-menu-select / -input, omarchy-launch-tui, notify-send, aikit-sync)
+# sont remplacées par des bouchons. Le bouchon du menu respecte le contrat de
+# omarchy-menu-select : il rend "<libellé>\t<sous-titre>", jamais la clé — ce
+# qui vérifie la table de correspondance plutôt que de la contourner.
+#
+#   aikit-selftest          joue tout
+#   aikit-selftest -v       montre les menus traversés
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+VERBOSE=${1:-}
+SHARE=${AIKIT_SHARE_SRC:-$HOME/.local/share/aikit}
+PASS=0 FAIL=0
+
+sandbox=$(mktemp -d) || exit 1
+[[ -n ${AIKIT_KEEP:-} ]] || trap 'rm -rf "$sandbox"' EXIT
+
+# --- bac à sable ------------------------------------------------------------
+mkdir -p "$sandbox"/{bin,share,cache,repos}
+ln -s "$SHARE/rows.py" "$SHARE/i18n.sh" "$SHARE/strings.json" "$sandbox/share/"
+
+mkrepo() { # mkrepo <chemin relatif> <owner/name|->
+  local dir="$sandbox/repos/$1"
+  mkdir -p "$dir"
+  git -C "$dir" init -q 2>/dev/null
+  [[ $2 == - ]] || git -C "$dir" remote add origin "https://github.com/$2.git"
+  touch -d "$3" "$dir/.git"
+}
+mkrepo "alpha"            "acme/alpha"        "2026-08-26 12:00"
+mkrepo "beta project"     "acme/beta"         "2026-08-25 12:00"   # espace dans le nom
+mkrepo "gamma · delta"    "acme/gamma"        "2026-08-24 12:00"   # le séparateur des sous-titres
+mkrepo "local-only"       -                   "2026-08-23 12:00"   # pas de remote GitHub
+
+python3 - "$sandbox/share/aikit.db" <<'PY'
+import sqlite3, sys, time
+con = sqlite3.connect(sys.argv[1])
+con.executescript(open('/dev/stdin').read() if False else """
+CREATE TABLE repos (nwo TEXT PRIMARY KEY, owner TEXT, name TEXT, stars INTEGER, open_issues INTEGER,
+                    open_prs INTEGER, pushed_at TEXT, synced_at INTEGER);
+CREATE TABLE tracked (nwo TEXT PRIMARY KEY, path TEXT, last_used INTEGER, synced_at INTEGER);
+CREATE TABLE issues (nwo TEXT, number INTEGER, title TEXT, labels TEXT, planned INTEGER,
+                     assigned INTEGER, updated_at TEXT, PRIMARY KEY (nwo, number));
+CREATE TABLE prs (nwo TEXT, number INTEGER, title TEXT, labels TEXT, draft INTEGER, ci TEXT,
+                  conflicting INTEGER, updated_at TEXT, PRIMARY KEY (nwo, number));
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+""")
+now = int(time.time())
+con.executemany("INSERT INTO repos VALUES (?,?,?,?,?,?,?,?)", [
+    ("acme/alpha", "acme", "alpha", 5, 2, 1, "2026-08-26T10:00:00Z", now),
+    ("acme/beta",  "acme", "beta", 90, 7, 0, "2026-08-20T10:00:00Z", now),
+    ("acme/gamma", "acme", "gamma", 0, 40, 3, "2026-08-24T10:00:00Z", now),
+])
+con.execute("INSERT INTO tracked VALUES ('acme/alpha', '', ?, ?)", (now, now))
+con.executemany("INSERT INTO issues VALUES (?,?,?,?,?,?,?)", [
+    # le titre commence par un numéro : piège pour qui lirait le libellé
+    ("acme/alpha", 12, "#999 crash on startup", '["effort: small"]', 1, 0, "2026-08-26T10:00:00Z"),
+    ("acme/alpha", 34, "unplanned idea", '[]', 0, 0, "2026-08-25T10:00:00Z"),
+])
+con.executemany("INSERT INTO prs VALUES (?,?,?,?,?,?,?,?)", [
+    ("acme/alpha", 77, "#111 fix the thing", '[]', 0, "fail", 0, "2026-08-26T10:00:00Z"),
+])
+con.commit()
+PY
+
+# --- bouchons ---------------------------------------------------------------
+cat > "$sandbox/bin/omarchy-menu-select" <<'STUB'
+#!/bin/bash
+# Rend "<libellé>\t<sous-titre>" comme le vrai outil. La ligne choisie vient de
+# $PICKS : "match:<texte>" (sous-chaîne du libellé) ou "index:<n>".
+prompt="$1"; shift
+rows=(); while (($#)); do [[ $1 == "--" ]] && break; rows+=("$1"); shift; done
+[[ -n ${TRACE:-} ]] && { echo "MENU|$prompt|${#rows[@]}" >> "$TRACE"; printf '%s\n' "${rows[@]}" >> "$TRACE"; }
+n=$(cat "$PICKS.n" 2>/dev/null || echo 0); echo $((n + 1)) > "$PICKS.n"
+pick=$(sed -n "$((n + 1))p" "$PICKS")
+[[ -z $pick ]] && exit 1
+chosen=""
+case "$pick" in
+  index:*) chosen="${rows[${pick#index:}]}" ;;
+  match:*) for r in "${rows[@]}"; do [[ $r == *"${pick#match:}"* ]] && { chosen="$r"; break; }; done ;;
+  cancel)  exit 1 ;;
+esac
+[[ -z $chosen ]] && { echo "stub: aucune ligne ne correspond à « $pick » dans « $prompt »" >&2; exit 1; }
+printf '%s\n' "${chosen#*$'\t'}"      # on retire le glyphe, on garde libellé + sous-titre
+STUB
+cat > "$sandbox/bin/omarchy-menu-input" <<'STUB'
+#!/bin/bash
+[[ -n ${TRACE:-} ]] && echo "INPUT|$1" >> "$TRACE"
+n=$(cat "$PICKS.n" 2>/dev/null || echo 0); echo $((n + 1)) > "$PICKS.n"
+sed -n "$((n + 1))p" "$PICKS"
+STUB
+cat > "$sandbox/bin/omarchy-launch-tui" <<'STUB'
+#!/bin/bash
+printf 'LAUNCH|%s\n' "$*"
+STUB
+printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/notify-send"
+printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/aikit-sync"
+printf '#!/bin/bash\nexit 1\n' > "$sandbox/bin/tmux"          # jamais de session en cours
+chmod +x "$sandbox"/bin/*
+
+# --- utilitaires ------------------------------------------------------------
+flow() { # flow <choix...> -> sortie d'aikit (dont la ligne LAUNCH)
+  printf '%s\n' "$@" > "$sandbox/picks"; rm -f "$sandbox/picks.n"
+  PATH="$sandbox/bin:$HOME/.local/bin:$PATH" \
+  PICKS="$sandbox/picks" TRACE="${VERBOSE:+$sandbox/trace}" \
+  AIKIT_SHARE="$sandbox/share" AIKIT_DB="$sandbox/share/aikit.db" \
+  AIKIT_CACHE="$sandbox/cache" AIKIT_ROOTS="$sandbox/repos" AIKIT_LANG=en \
+    ${AIKIT_XTRACE:+bash -x} "$HOME/.local/bin/aikit" 2>"$sandbox/err"
+  [[ -n ${AIKIT_DEBUG:-} ]] && { echo "--- err ---" >&2; cat "$sandbox/err" >&2; }
+}
+
+check() { # check <intitulé> <attendu> <obtenu>
+  if [[ $2 == "$3" ]]; then
+    ((PASS++)); printf '  \033[32m✓\033[0m %s\n' "$1"
+  else
+    ((FAIL++)); printf '  \033[31m✗\033[0m %s\n     attendu : %s\n     obtenu  : %s\n' "$1" "$2" "$3"
+    [[ -s $sandbox/err ]] && sed 's/^/     err: /' "$sandbox/err"
+  fi
+}
+
+launched() { sed -n 's/^LAUNCH|.*--exec [^ ]* //p' <<<"$1"; }   # "<dépôt> <prompt>"
+
+echo "aikit-selftest — bac à sable : $sandbox"
+echo
+
+# --- 1. le chemin du dépôt survit aux caractères pénibles -------------------
+echo "Dépôts"
+out=$(flow "match:beta project" "match:Legacy audit")
+check "nom avec espace" "$sandbox/repos/beta project /ai-migration-kit:migrate-assess " "$(launched "$out")"
+
+out=$(flow "match:gamma" "match:Legacy audit")
+check "nom contenant le séparateur « · »" "$sandbox/repos/gamma · delta /ai-migration-kit:migrate-assess " "$(launched "$out")"
+
+out=$(flow "match:local-only" "match:Legacy audit")
+check "dépôt sans remote GitHub" "$sandbox/repos/local-only /ai-migration-kit:migrate-assess " "$(launched "$out")"
+
+# --- 2. tri ------------------------------------------------------------------
+echo "Tri"
+out=$(flow "match:Sort:" "match:stars" "index:1" "match:Legacy audit")
+check "tri par étoiles : beta (90) en tête" "$sandbox/repos/beta project /ai-migration-kit:migrate-assess " "$(launched "$out")"
+check "tri mémorisé" "stars" "$(cat "$sandbox/cache/sort")"
+
+out=$(flow "match:Sort:" "match:open issues" "index:1" "match:Legacy audit")
+check "tri par issues : gamma (40) en tête" "$sandbox/repos/gamma · delta /ai-migration-kit:migrate-assess " "$(launched "$out")"
+printf 'recent\n' > "$sandbox/cache/sort"
+
+# --- 3. le menu des skills rend bien la skill -------------------------------
+echo "Skills"
+for pair in "Auto-dev:auto-dev" "Create an issue:create-issue" "Triage:triage-backlog" \
+            "Repository profile:get-repo-profile" "Full migration:migrate"; do
+  label=${pair%%:*} skill=${pair#*:}
+  case "$skill" in
+    auto-dev)     out=$(flow "match:alpha" "match:$label" "2") ;;
+    create-issue) out=$(flow "match:alpha" "match:$label" "une idée") ;;
+    *)            out=$(flow "match:alpha" "match:$label") ;;
+  esac
+  check "« $label » lance $skill" "$skill" "$(launched "$out" | sed -n 's#.*/ai-migration-kit:\([a-z-]*\).*#\1#p')"
+done
+
+# --- 4. numéros d'issue et de PR --------------------------------------------
+echo "Issues et PR"
+out=$(flow "match:alpha" "match:Implement an issue" "match:#999 crash")
+check "le numéro vient de la clé, pas du titre" "/ai-migration-kit:implement-issue 12" \
+      "$(launched "$out" | sed 's#^[^ ]* ##;s#\(implement-issue [0-9]*\).*#\1#;s#^#/ai-migration-kit:#;s#/ai-migration-kit:/ai-migration-kit:#/ai-migration-kit:#')"
+out=$(flow "match:alpha" "match:Merge a PR" "match:#111 fix")
+check "PR : idem" "/ai-migration-kit:merge-pr 77" \
+      "$(launched "$out" | sed 's#^[^ ]* ##')"
+
+# --- 5. compteurs -----------------------------------------------------------
+echo "Compteurs"
+eval "$(python3 "$sandbox/share/rows.py" counts "$sandbox/share/aikit.db" acme/alpha)"
+check "dépôt suivi : 2 issues, 1 planifiée, 1 éligible" "2 1 1" "$ISSUES $PLANNED $ELIGIBLE"
+eval "$(python3 "$sandbox/share/rows.py" counts "$sandbox/share/aikit.db" acme/beta)"
+check "dépôt non détaillé : totaux étage 1, détail inconnu" "7 -1 -1" "$ISSUES $PLANNED $ELIGIBLE"
+
+# --- 6. le catalogue couvre toutes les clés utilisées -----------------------
+echo "Chaînes"
+used=$( {
+    # les clés littérales : toutes passent par $(t clé) ou T("clé")
+    grep -ohE '\$\(t [a-z][a-z0-9_]*' "$HOME/.local/bin/aikit" \
+         "$HOME/.config/omarchy/bar/scripts/aikit-status" | sed 's/.*(t //'
+    grep -ohE 'T\("[a-z][a-z0-9_]*"' "$SHARE/rows.py" | sed 's/T("//;s/"//' | grep -v '_$'
+    # les clés construites à l'exécution
+    printf 'ci_ok\nci_fail\nci_pending\nci_none\n'
+    printf 'sort_recent\nsort_pushed\nsort_name\nsort_stars\nsort_issues\nsort_prs\n'
+    printf 'no_repo\nno_repo_gh\n'
+  } | sort -u )
+
+for lang in en fr; do
+  missing=$(python3 - "$SHARE/strings.json" "$lang" <<PY
+import json, sys
+cat = json.load(open(sys.argv[1]))[sys.argv[2]]
+print(" ".join(k for k in """$used""".split() if k not in cat))
+PY
+)
+  check "aucune clé manquante en $lang" "" "$missing"
+done
+
+# --- verdict ----------------------------------------------------------------
+echo
+if ((FAIL)); then
+  printf '\033[31m%d échec(s)\033[0m sur %d vérifications\n' "$FAIL" "$((PASS + FAIL))"
+  exit 1
+fi
+printf '\033[32m%d vérifications passées\033[0m\n' "$PASS"

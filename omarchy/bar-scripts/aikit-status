@@ -1,0 +1,113 @@
+#!/bin/bash
+# Widget de barre AI Kit.
+#
+# Au repos : le glyphe seul. Sessions en cours : "󱓞 2 · 7✓" — nombre de
+# sessions et total des PR mergées, lu dans les state files des flottes
+# auto-dev (~/.cache/aikit/state/<dépôt>.md, chemin imposé au lancement).
+#
+# Deux alertes, toutes deux visibles même sans session :
+#   · une session détachée et silencieuse depuis AIKIT_STALL_SECS (défaut
+#     5 min) attend sans doute une décision → "!" et notification unique ;
+#   · une synchronisation en échec ou en retard → "" et détail au survol,
+#     parce qu'une base muette qui ne se met plus à jour ment silencieusement.
+#
+#   clic gauche  → dépôt puis skill      clic droit → reprendre une session
+#   clic milieu  → auto-dev
+
+source "$HOME/.local/share/aikit/i18n.sh"
+
+CACHE="$HOME/.cache/aikit"
+STATE="$CACHE/state"
+STAMPS="$CACHE/notified"
+DB="$HOME/.local/share/aikit/aikit.db"
+STALL=${AIKIT_STALL_SECS:-300}
+SYNC_STALE=${AIKIT_SYNC_STALE_SECS:-1200}
+G_WARN=$''        # ! panne de synchro
+
+now=$(date +%s)
+
+# --- santé de la base -------------------------------------------------------
+health=""
+if [[ -f $DB ]] && command -v sqlite3 >/dev/null; then
+  IFS='|' read -r last_ok fail_streak last_error < <(
+    sqlite3 "file:$DB?mode=ro" -cmd ".timeout 2000" \
+      "SELECT COALESCE((SELECT value FROM meta WHERE key='last_ok'),0),
+              COALESCE((SELECT value FROM meta WHERE key='fail_streak'),0),
+              COALESCE((SELECT value FROM meta WHERE key='last_error'),'')" 2>/dev/null)
+  if [[ ${fail_streak:-0} -gt 0 ]]; then
+    health=$(t health_error "${last_error:-?}")
+  elif [[ ${last_ok:-0} -gt 0 ]] && (( now - last_ok > SYNC_STALE )); then
+    health=$(t health_stale "$(( (now - last_ok) / 60 ))")
+  fi
+fi
+
+emit() { # emit <texte> <tooltip> <classe>
+  local text="$1" tip="$2" class="$3"
+  if [[ -n $health ]]; then
+    text="$text $G_WARN"; tip="$tip"$'\n'"$G_WARN $health"
+    [[ $class == urgent ]] || class="warning"
+  fi
+  jq -nc --arg t "$text" --arg tt "$tip" --arg c "$class" '{text:$t, tooltip:$tt, class:$c}'
+}
+
+sessions=$(tmux list-sessions -F '#{session_name}|#{session_attached}|#{session_activity}' 2>/dev/null |
+           grep '^aikit-' || true)
+
+if [[ -z $sessions ]]; then
+  emit "󱓞" "$(t bar_idle)"$'\n'"$(t bar_idle_hint)" ""
+  exit 0
+fi
+
+# "en vol / mergées / file" d'un state file auto-dev
+parse_state() {
+  [[ -f $1 ]] || { echo "0 0 0"; return; }
+  awk '
+    /^## / { sec = tolower($0) }
+    sec ~ /in flight/  && /^- /      { inflight++ }
+    sec ~ /completed/  && /MERGED/   { merges++ }
+    sec ~ /queue/      && /#[0-9]+/  { queue += gsub(/#[0-9]+/, "&") }
+    END { printf "%d %d %d", inflight, merges, queue }
+  ' "$1"
+}
+
+mkdir -p "$STAMPS"
+n=0 total_merges=0 stalled=0 lines=()
+
+while IFS='|' read -r name attached activity; do
+  [[ -n $name ]] || continue
+  ((n++))
+  slug=${name#aikit-}
+  read -r inflight merges queue < <(parse_state "$STATE/$slug.md")
+  ((total_merges += merges))
+
+  idle=$(( now - activity ))
+  bits=()
+  ((inflight)) && bits+=("$(t bar_inflight "$inflight")")
+  ((merges))   && bits+=("$(t bar_merged "$merges")")
+  ((queue))    && bits+=("$(t bar_queue "$queue")")
+
+  if (( idle > STALL )) && [[ $attached == 0 ]]; then
+    ((stalled++))
+    bits+=("$(t bar_stalled "$((idle / 60))")")
+    if [[ ! -f $STAMPS/$name ]]; then
+      touch "$STAMPS/$name"
+      notify-send -a "AI Kit" -u critical \
+        "$(t stall_title "$slug")" "$(t stall_body "$((idle / 60))")" || true
+    fi
+  else
+    [[ $attached == 0 ]] && bits+=("$(t bar_detached)")
+    ((idle < STALL)) && rm -f "$STAMPS/$name"
+    bits+=("$(t bar_active "$((idle / 60))")")
+  fi
+
+  joined=$(printf ' · %s' "${bits[@]}"); joined=${joined# · }
+  lines+=("$slug — $joined")
+done <<<"$sessions"
+
+text="󱓞 $n"
+((total_merges)) && text="$text · $total_merges✓"
+((stalled)) && text="$text !"
+
+emit "$text" \
+     "$(printf '%s\n%s\n%s' "$(t bar_header "$n")" "$(printf '%s\n' "${lines[@]}")" "$(t bar_hint)")" \
+     "$( ((stalled)) && echo urgent || echo active )"

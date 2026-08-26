@@ -1,0 +1,10 @@
+{
+  "id": "aikit",
+  "type": "command",
+  "exec": "~/.config/omarchy/bar/scripts/aikit-status",
+  "interval": 10,
+  "tooltip": "AI Kit",
+  "onClick": "/home/phmatray/.local/bin/aikit",
+  "onRightClick": "/home/phmatray/.local/bin/aikit attach",
+  "onMiddleClick": "/home/phmatray/.local/bin/aikit auto-dev"
+}

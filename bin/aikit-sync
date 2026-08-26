@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""aikit-sync — tient à jour la base locale que consulte AI Kit.
+
+Deux étages, pour ne payer que ce qui sert :
+
+  * étage 1 (deux appels, tous les dépôts) — `gh repo list <owner>` : étoiles,
+    issues et PR ouvertes, dernier push. C'est ce qu'affiche le sélecteur.
+  * étage 2 (un appel par dépôt suivi) — issues et PR détaillées : titres,
+    labels, présence d'un plan d'implémentation, état CI. Seuls les dépôts
+    « suivis » (ouverts au moins une fois par aikit, ou avec une session en
+    cours) sont rafraîchis.
+
+Base : ~/.local/share/aikit/aikit.db
+
+  aikit-sync              étage 1 + étage 2 des dépôts suivis
+  aikit-sync --repos      étage 1 seulement
+  aikit-sync --repo NWO   étage 2 d'un dépôt (owner/name)
+  aikit-sync --track NWO --path DIR   marque un dépôt comme suivi
+  aikit-sync --status     état de la base
+"""
+
+import argparse
+import json
+import os
+import pathlib
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+
+DB_PATH = pathlib.Path.home() / ".local/share/aikit/aikit.db"
+TRACK_TTL = 30 * 86400          # un dépôt reste « suivi » 30 jours après usage
+FAILED = {"FAILURE", "TIMED_OUT", "CANCELLED", "ERROR"}
+RUNNING = {"IN_PROGRESS", "QUEUED", "PENDING", "WAITING"}
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS repos (
+  nwo TEXT PRIMARY KEY, owner TEXT, name TEXT,
+  stars INTEGER DEFAULT 0, open_issues INTEGER DEFAULT 0, open_prs INTEGER DEFAULT 0,
+  pushed_at TEXT, synced_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS tracked (
+  nwo TEXT PRIMARY KEY, path TEXT, last_used INTEGER, synced_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS issues (
+  nwo TEXT, number INTEGER, title TEXT, labels TEXT, planned INTEGER,
+  assigned INTEGER, updated_at TEXT, PRIMARY KEY (nwo, number)
+);
+CREATE TABLE IF NOT EXISTS prs (
+  nwo TEXT, number INTEGER, title TEXT, labels TEXT, draft INTEGER,
+  ci TEXT, conflicting INTEGER, updated_at TEXT, PRIMARY KEY (nwo, number)
+);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+"""
+
+
+def db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB_PATH, timeout=30)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.executescript(SCHEMA)
+    return con
+
+
+LAST_ERROR = ""      # dernière panne rencontrée pendant ce passage
+
+
+def gh(args, timeout=120):
+    """Appelle gh et renvoie du JSON, ou None si l'appel échoue. Toute panne
+    est retenue dans LAST_ERROR : une synchro muette qui échoue est pire
+    qu'une synchro absente, l'interface doit pouvoir le dire."""
+    global LAST_ERROR
+    try:
+        out = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout)
+    except OSError as exc:
+        LAST_ERROR = "gh introuvable (%s)" % exc
+        return None
+    except subprocess.TimeoutExpired:
+        LAST_ERROR = "gh %s: délai dépassé" % args[0]
+        return None
+    if out.returncode != 0:
+        LAST_ERROR = (out.stderr or "gh %s: code %d" % (args[0], out.returncode)).strip().splitlines()[-1][:200]
+        return None
+    try:
+        return json.loads(out.stdout or "null")
+    except json.JSONDecodeError:
+        LAST_ERROR = "gh %s: réponse illisible" % args[0]
+        return None
+
+
+def meta_get(con, key, default=""):
+    row = con.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def meta_set(con, **pairs):
+    con.executemany("INSERT INTO meta (key, value) VALUES (?,?)"
+                    " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    [(k, str(v)) for k, v in pairs.items()])
+    con.commit()
+
+
+def note_health(con):
+    """Consigne l'issue du passage : c'est ce que lit le widget de barre."""
+    now = int(time.time())
+    if LAST_ERROR:
+        streak = int(meta_get(con, "fail_streak", "0") or 0) + 1
+        meta_set(con, fail_streak=streak, last_error=LAST_ERROR, last_fail=now)
+    else:
+        meta_set(con, fail_streak=0, last_error="", last_ok=now)
+
+
+def ci_state(checks):
+    states = {(c.get("conclusion") or c.get("status") or c.get("state")) for c in (checks or [])}
+    if not states:
+        return ""
+    if states & FAILED:
+        return "fail"
+    if states & RUNNING:
+        return "pending"
+    return "ok"
+
+
+def local_owners():
+    """Comptes lus dans les remotes des clones locaux (AIKIT_ROOTS)."""
+    roots = os.environ.get("AIKIT_ROOTS") or " ".join(
+        str(pathlib.Path.home() / d) for d in ("Data/Repositories", "Work", "Projects"))
+    found = set()
+    for root in roots.split():
+        base = pathlib.Path(root)
+        if not base.is_dir():
+            continue
+        for cfg in base.glob("*/*/*/.git/config"):
+            try:
+                text = cfg.read_text(errors="ignore")
+            except OSError:
+                continue
+            m = re.search(r"github\.com[:/]([^/\s]+)/", text)
+            if m:
+                found.add(m.group(1))
+    return found
+
+
+def owners(con):
+    """Comptes GitHub à interroger : clones locaux, dépôts suivis, compte connecté."""
+    found = {row[0].split("/")[0] for row in con.execute("SELECT nwo FROM tracked")}
+    found |= {row[0] for row in con.execute("SELECT owner FROM repos")}
+    found |= local_owners()
+    if not found:
+        me = gh(["api", "user", "--jq", ".login"])
+        if isinstance(me, str):
+            found.add(me)
+    return sorted(o for o in found if o)
+
+
+def sync_repos(con):
+    """Étage 1 — un appel par compte."""
+    total = 0
+    for owner in owners(con):
+        data = gh(["repo", "list", owner, "--limit", "500", "--json",
+                   "nameWithOwner,stargazerCount,issues,pullRequests,pushedAt"])
+        if not data:
+            continue
+        now = int(time.time())
+        con.executemany(
+            "INSERT INTO repos (nwo, owner, name, stars, open_issues, open_prs, pushed_at, synced_at)"
+            " VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(nwo) DO UPDATE SET"
+            " stars=excluded.stars, open_issues=excluded.open_issues, open_prs=excluded.open_prs,"
+            " pushed_at=excluded.pushed_at, synced_at=excluded.synced_at",
+            [(r["nameWithOwner"], r["nameWithOwner"].split("/")[0], r["nameWithOwner"].split("/")[1],
+              r.get("stargazerCount", 0), (r.get("issues") or {}).get("totalCount", 0),
+              (r.get("pullRequests") or {}).get("totalCount", 0), r.get("pushedAt"), now)
+             for r in data])
+        total += len(data)
+    meta_set(con, repos_synced_at=int(time.time()))
+    return total
+
+
+def sync_repo(con, nwo):
+    """Étage 2 — issues et PR détaillées d'un dépôt."""
+    issues = gh(["issue", "list", "-R", nwo, "--state", "open", "--limit", "200",
+                 "--json", "number,title,labels,body,updatedAt,assignees"])
+    prs = gh(["pr", "list", "-R", nwo, "--state", "open", "--limit", "100", "--json",
+              "number,title,labels,isDraft,mergeable,statusCheckRollup,updatedAt"])
+    if issues is None and prs is None:
+        return None
+
+    now = int(time.time())
+    if issues is not None:
+        con.execute("DELETE FROM issues WHERE nwo = ?", (nwo,))
+        con.executemany(
+            "INSERT INTO issues (nwo, number, title, labels, planned, assigned, updated_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            [(nwo, i["number"], i["title"],
+              json.dumps([l["name"] for l in i.get("labels", [])]),
+              int("Implementation plan" in (i.get("body") or "")),
+              int(bool(i.get("assignees"))), i.get("updatedAt"))
+             for i in issues])
+    if prs is not None:
+        con.execute("DELETE FROM prs WHERE nwo = ?", (nwo,))
+        con.executemany(
+            "INSERT INTO prs (nwo, number, title, labels, draft, ci, conflicting, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            [(nwo, p["number"], p["title"],
+              json.dumps([l["name"] for l in p.get("labels", [])]),
+              int(bool(p.get("isDraft"))), ci_state(p.get("statusCheckRollup")),
+              int(p.get("mergeable") == "CONFLICTING"), p.get("updatedAt"))
+             for p in prs])
+    con.execute("UPDATE tracked SET synced_at = ? WHERE nwo = ?", (now, nwo))
+    con.commit()
+    return (len(issues or []), len(prs or []))
+
+
+def live_sessions():
+    """Dépôts avec une session tmux en cours — toujours prioritaires."""
+    try:
+        out = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    return {line[len("aikit-"):] for line in out.stdout.split() if line.startswith("aikit-")}
+
+
+def tracked_repos(con):
+    cutoff = int(time.time()) - TRACK_TTL
+    rows = con.execute("SELECT nwo, path, last_used FROM tracked WHERE last_used >= ?", (cutoff,)).fetchall()
+    return [(nwo, path) for nwo, path, _ in rows]
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--repos", action="store_true", help="étage 1 seulement")
+    ap.add_argument("--repo", metavar="NWO", help="étage 2 d'un dépôt")
+    ap.add_argument("--track", metavar="NWO", help="marque un dépôt comme suivi")
+    ap.add_argument("--path", metavar="DIR", help="chemin local, avec --track")
+    ap.add_argument("--status", action="store_true", help="état de la base")
+    ap.add_argument("--force", action="store_true", help="ignore la fraîcheur de l'étage 1")
+    ap.add_argument("--repos-ttl", type=int, default=1800,
+                    help="âge au-delà duquel l'étage 1 est refait (défaut 1800 s)")
+    args = ap.parse_args()
+
+    con = db()
+
+    if args.track:
+        con.execute("INSERT INTO tracked (nwo, path, last_used, synced_at) VALUES (?,?,?,0)"
+                    " ON CONFLICT(nwo) DO UPDATE SET path=excluded.path, last_used=excluded.last_used",
+                    (args.track, args.path or "", int(time.time())))
+        con.commit()
+        return 0
+
+    if args.status:
+        repos = con.execute("SELECT COUNT(*) FROM repos").fetchone()[0]
+        tr = con.execute("SELECT COUNT(*) FROM tracked").fetchone()[0]
+        iss = con.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
+        prs = con.execute("SELECT COUNT(*) FROM prs").fetchone()[0]
+        ts = meta_get(con, "repos_synced_at")
+        age = (int(time.time()) - int(ts)) // 60 if ts else None
+        print(f"base      : {DB_PATH}")
+        print(f"dépôts    : {repos} (étage 1{f', il y a {age} min' if age is not None else ''})")
+        print(f"suivis    : {tr}")
+        print(f"issues/PR : {iss} / {prs}")
+        ok, streak, err = meta_get(con, "last_ok"), meta_get(con, "fail_streak", "0"), meta_get(con, "last_error")
+        if err:
+            print(f"santé     : ÉCHEC ×{streak} — {err}")
+        else:
+            since = (int(time.time()) - int(ok)) // 60 if ok else None
+            print(f"santé     : ok{f' (dernier succès il y a {since} min)' if since is not None else ''}")
+        for nwo, path, used, synced in con.execute(
+                "SELECT nwo, path, last_used, synced_at FROM tracked ORDER BY last_used DESC LIMIT 10"):
+            when = f"{(int(time.time()) - synced) // 60} min" if synced else "jamais"
+            print(f"  {nwo:<45} sync {when}")
+        return 0
+
+    if args.repo:
+        res = sync_repo(con, args.repo)
+        note_health(con)
+        print(f"{args.repo}: {res[0]} issues, {res[1]} PR" if res else f"{args.repo}: échec", file=sys.stderr)
+        return 0 if res else 1
+
+    ts = meta_get(con, "repos_synced_at")
+    stale = args.force or not ts or (int(time.time()) - int(ts)) > args.repos_ttl
+    if stale:
+        n = sync_repos(con)
+        print(f"étage 1 : {n} dépôts", file=sys.stderr)
+    else:
+        print("étage 1 : encore frais", file=sys.stderr)
+
+    if not args.repos:
+        live = live_sessions()
+        todo = tracked_repos(con)
+        # les dépôts avec une session en cours d'abord
+        todo.sort(key=lambda t: (t[0].split("/")[1].lower() not in live,))
+        for nwo, _ in todo:
+            res = sync_repo(con, nwo)
+            if res:
+                print(f"étage 2 : {nwo} — {res[0]} issues, {res[1]} PR", file=sys.stderr)
+    note_health(con)
+    if LAST_ERROR:
+        print(f"santé : {LAST_ERROR}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

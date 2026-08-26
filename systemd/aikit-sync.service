@@ -1,0 +1,9 @@
+[Unit]
+Description=Synchronise la base locale GitHub d'AI Kit
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=%h/.local/bin/aikit-sync
+TimeoutStartSec=10min

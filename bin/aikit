@@ -1,0 +1,291 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# aikit — lance une skill de l'AI Migration Kit sur un dépôt, depuis le GUI.
+#
+#   aikit                    dépôt → skill → paramètres (parcours principal)
+#   aikit <skill>            raccourci : skill imposée, dépôt demandé
+#   aikit attach             réattache une session aikit en cours
+#   aikit sync               force une synchronisation de la base
+#   aikit --exec <s> <d> <p> interne : ouvre la session tmux
+#   aikit --run <d> <p>      interne : lance claude et notifie à la fin
+#
+# Les menus ne touchent jamais le réseau : tout vient de la base locale
+# (~/.local/share/aikit/aikit.db) tenue à jour par aikit-sync.timer.
+#
+# Contrat des menus : chaque ligne est "<clé>\t<glyphe>\t<libellé>\t<sous-titre>".
+# menu_pick n'envoie que l'affichage au menu et rend la clé — rien n'est jamais
+# reconstitué en redécoupant le texte montré à l'utilisateur.
+#
+# Réglages : AIKIT_ROOTS        racines de recherche des dépôts
+#            AIKIT_CLAUDE_FLAGS défaut : --permission-mode acceptEdits
+#            AIKIT_LANG         en / fr (défaut : la locale du système)
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+# ~/.local/bin doit être joignable depuis la session tmux, mais sans passer
+# devant un PATH déjà préparé (bac à sable des tests, wrappers).
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+AIKIT_SHARE=${AIKIT_SHARE:-$HOME/.local/share/aikit}
+source "$AIKIT_SHARE/i18n.sh"
+
+AIKIT_ROOTS=${AIKIT_ROOTS:-"$HOME/Data/Repositories $HOME/Work $HOME/Projects"}
+AIKIT_CLAUDE_FLAGS=${AIKIT_CLAUDE_FLAGS:---permission-mode acceptEdits}
+AIKIT_CACHE=${AIKIT_CACHE:-$HOME/.cache/aikit}
+AIKIT_STATE_DIR="$AIKIT_CACHE/state"
+AIKIT_SORT_FILE="$AIKIT_CACHE/sort"
+AIKIT_DB=${AIKIT_DB:-$AIKIT_SHARE/aikit.db}
+ROWS="$AIKIT_SHARE/rows.py"
+
+# Glyphes en points de code : un glyphe collé ne survit pas toujours au trajet
+# jusqu'au fichier. Tous vérifiés présents dans JetBrainsMono Nerd Font.
+G_RESUME=$''        # ▶  reprendre
+G_AUTODEV=$'\U000F14DE'   # 🚀 fusée
+G_IMPLEMENT=$''     # </> code
+G_MERGE=$''         # ᛦ  git-merge
+G_CREATE=$''        # ✎  éditer
+G_TRIAGE=$'\U000F0232'    # ⏳ entonnoir
+G_SETUP=$''         # ⚙  engrenage
+G_PROFILE=$''       # 🔧 clé
+G_FOLLOWUPS=$''     # ☑  case cochée
+G_ASSESS=$''        # 🔍 loupe
+G_MIGRATE=$'\U000F0450'   # ↻  cycle
+G_SORT=$''          # ⇅  tri
+
+notify() { command -v notify-send >/dev/null && notify-send -a "AI Kit" "$@" || true; }
+die() { notify "$1" "${2-}"; echo "aikit: $1 ${2-}" >&2; exit 1; }
+slug_of() { basename "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-$//'; }
+nwo_of() { # "" si le dépôt n'a pas de remote GitHub, ou si git refuse de le lire
+  local url
+  url=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 0
+  sed -nE 's#.*github\.com[:/]([^/]+)/(.+)$#\1/\2#p' <<<"$url" | sed 's/\.git$//'   # ERE n'a pas de quantificateur paresseux
+}
+
+# --- modes internes ---------------------------------------------------------
+if [[ ${1-} == --exec ]]; then
+  exec tmux new-session -A -s "$2" -c "$3" "$HOME/.local/bin/aikit" --run "$3" "$4"
+fi
+
+if [[ ${1-} == --run ]]; then
+  dir="$2" prompt="$3" rc=0
+  repo=$(basename "$dir")
+  claude $AIKIT_CLAUDE_FLAGS "$prompt" || rc=$?
+  rm -f "$AIKIT_CACHE/notified/aikit-$(slug_of "$dir")"
+  if ((rc == 0)); then
+    notify "$(t done_ok_title "$repo")" "$(t done_ok_body)"
+  else
+    notify -u critical "$(t done_err_title "$repo")" "$(t done_err_body "$rc")"
+  fi
+  printf '\n\033[2m%s\033[0m\n' "$(t press_enter "$rc")"
+  read -r _ || true
+  exit "$rc"
+fi
+
+if [[ ${1-} == sync ]]; then
+  exec omarchy-launch-tui --app-id=org.omarchy.aikit \
+    bash -c "aikit-sync --force; aikit-sync --status; read -n1 -r"
+fi
+
+# --- menus ------------------------------------------------------------------
+declare -A MENU_KEY
+MENU_ARGS=(--width 760 --height 520)
+
+menu_pick() { # menu_pick <invite> <ligne...> -> clé de la ligne choisie
+  local prompt="$1"; shift
+  local display=() row rest sel
+  MENU_KEY=()
+  for row in "$@"; do
+    rest=${row#*$'\t'}                       # "<glyphe>\t<libellé>\t<sous-titre>"
+    display+=("$rest")
+    MENU_KEY["${rest#*$'\t'}"]=${row%%$'\t'*} # le menu rend "<libellé>\t<sous-titre>"
+  done
+  ((${#display[@]})) || return 1
+  sel=$(omarchy-menu-select "$prompt" "${display[@]}" -- "${MENU_ARGS[@]}") || return 1
+  printf '%s\n' "${MENU_KEY[$sel]-}"
+}
+
+ask() { omarchy-menu-input "$1" --width 520; }
+row() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"; }   # clé glyphe libellé sous-titre
+
+# --- dépôts -----------------------------------------------------------------
+list_repos() { # émet "<date de modif>\t<chemin>" ; rows.py se charge du tri
+  local only_gh=${1-} mtime path
+  find $AIKIT_ROOTS -maxdepth 4 -type d -name .git -printf '%T@\t%h\n' 2>/dev/null |
+    while IFS=$'\t' read -r mtime path; do
+      [[ -z $only_gh ]] || grep -qs 'github\.com' "$path/.git/config" || continue
+      printf '%s\t%s\n' "$mtime" "$path"
+    done
+}
+
+sort_mode() { cat "$AIKIT_SORT_FILE" 2>/dev/null || echo recent; }
+
+choose_sort() { # mémorise le tri choisi ; l'annulation garde le tri courant
+  local rows=() key m
+  for m in recent pushed name stars issues prs; do
+    rows+=("$(row "$m" "$G_SORT" "$(t "sort_$m")" " ")")
+  done
+  MENU_ARGS=(--width 520)
+  key=$(menu_pick "$(t sort_prompt)" "${rows[@]}") || return 0
+  [[ -n $key ]] || return 0
+  mkdir -p "$AIKIT_CACHE"
+  printf '%s\n' "$key" > "$AIKIT_SORT_FILE"
+}
+
+pick_repo() { # -> chemin du dépôt choisi
+  local rows=() key mode
+  while :; do
+    mode=$(sort_mode)
+    mapfile -t rows < <(
+      row "__sort__" "$G_SORT" "$(t sort_row "$(t "sort_$mode")")" "$(t sort_hint)"
+      AIKIT_SESSIONS="$(tmux list-sessions -F '#{session_name}' 2>/dev/null |
+                        sed -n 's/^aikit-//p' | tr '\n' ' ')" \
+      list_repos "${1-}" | python3 "$ROWS" repos "$AIKIT_DB" "$mode")
+    ((${#rows[@]} > 1)) || die "$(t "${1:+no_repo_gh}${1:-no_repo}" "$AIKIT_ROOTS")"
+    MENU_ARGS=(--width 760 --height 520)
+    key=$(menu_pick "$(t repo_prompt)" "${rows[@]}") || return 1
+    case "$key" in
+      "")        return 1 ;;
+      __sort__)  choose_sort ;;
+      *)         printf '%s\n' "$key"; return 0 ;;
+    esac
+  done
+}
+
+# --- base locale ------------------------------------------------------------
+counts_of() { # remplit ISSUES/PLANNED/ELIGIBLE/PRS/PRS_RED/AGE
+  ISSUES=0 PLANNED=0 ELIGIBLE=0 PRS=0 PRS_RED=0 AGE=-1
+  [[ -n ${1-} ]] || return 0
+  eval "$(python3 "$ROWS" counts "$AIKIT_DB" "$1" 2>/dev/null)"
+}
+
+freshen() { # <nwo> <chemin> — suit le dépôt, puis rafraîchit en arrière-plan
+  [[ -n $1 ]] || return 0
+  aikit-sync --track "$1" --path "$2" 2>/dev/null || true
+  ( aikit-sync --repo "$1" >/dev/null 2>&1 & ) || true
+}
+
+pick_number() { # <dépôt> <nwo> <issues|prs> <invite> -> numéro choisi
+  local repo="$1" nwo="$2" kind="$3" prompt="$4" rows=() key age=""
+  [[ -n $nwo ]] || { ask "$(t ask_number "$prompt")"; return; }
+  if ((AGE < 0)); then                       # jamais synchronisé en détail
+    notify "$(t reading_github)" "$nwo"
+    aikit-sync --repo "$nwo" >/dev/null 2>&1 || true
+    counts_of "$nwo"
+  fi
+  mapfile -t rows < <(python3 "$ROWS" "$kind" "$AIKIT_DB" "$nwo")
+  ((${#rows[@]})) || die "$(t nothing_open)" "$(basename "$repo")"
+  ((AGE >= 0)) && age=" · $(t stale "$AGE min")"
+  MENU_ARGS=(--width 880 --height 560)
+  key=$(menu_pick "$prompt$age" "${rows[@]}") || return 1
+  printf '%s\n' "$key"
+}
+
+# --- choix de la skill ------------------------------------------------------
+q() { (($1 < 0)) && echo "?" || echo "$1"; }   # compteur pas encore connu
+
+pick_skill() { # <dépôt> <nwo> -> identifiant de skill
+  local repo="$1" nwo="$2" rows=() session
+
+  session="aikit-$(slug_of "$repo")"
+  tmux has-session -t "$session" 2>/dev/null &&
+    rows+=("$(row "__attach" "$G_RESUME" "$(t skill_resume)" "$(t skill_resume_d "$session")")")
+
+  if [[ -n $nwo ]]; then
+    rows+=("$(row "auto-dev"         "$G_AUTODEV"   "$(t skill_autodev)"   "$(t skill_autodev_d "$(q "$ELIGIBLE")")")")
+    rows+=("$(row "implement-issue"  "$G_IMPLEMENT" "$(t skill_implement)" "$(t skill_implement_d "$(q "$PLANNED")")")")
+    rows+=("$(row "merge-pr"         "$G_MERGE"     "$(t skill_merge)"     "$(t skill_merge_d "$(q "$PRS")" "$(q "$PRS_RED")")")")
+    rows+=("$(row "create-issue"     "$G_CREATE"    "$(t skill_create)"    "$(t skill_create_d)")")
+    rows+=("$(row "triage-backlog"   "$G_TRIAGE"    "$(t skill_triage)"    "$(t skill_triage_d "$(q "$ISSUES")")")")
+    rows+=("$(row "setup-repo"       "$G_SETUP"     "$(t skill_setup)"     "$(t skill_setup_d)")")
+    rows+=("$(row "get-repo-profile" "$G_PROFILE"   "$(t skill_profile)"   "$(t skill_profile_d)")")
+  fi
+  rows+=("$(row "followups"      "$G_FOLLOWUPS" "$(t skill_followups)" "$(t skill_followups_d)")")
+  rows+=("$(row "migrate-assess" "$G_ASSESS"    "$(t skill_assess)"    "$(t skill_assess_d)")")
+  rows+=("$(row "migrate"        "$G_MIGRATE"   "$(t skill_migrate)"   "$(t skill_migrate_d)")")
+
+  MENU_ARGS=(--width 880 --height 560)
+  menu_pick "$(basename "$repo")" "${rows[@]}"
+}
+
+# --- réattachement ----------------------------------------------------------
+attach_session() {
+  local sel="${1-}" rows=() s sessions=()
+  if [[ -z $sel ]]; then
+    mapfile -t sessions < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^aikit-' || true)
+    ((${#sessions[@]})) || die "$(t no_session)"
+    if ((${#sessions[@]} == 1)); then
+      sel="${sessions[0]}"
+    else
+      for s in "${sessions[@]}"; do rows+=("$(row "$s" "$G_RESUME" "${s#aikit-}" "tmux $s")"); done
+      MENU_ARGS=(--width 520)
+      sel=$(menu_pick "$(t session_prompt)" "${rows[@]}") || exit 0
+      [[ -n $sel ]] || exit 0
+    fi
+  fi
+  rm -f "$AIKIT_CACHE/notified/$sel"
+  exec omarchy-launch-or-focus-tui --app-id=org.omarchy.aikit "tmux attach -t $sel"
+}
+
+[[ ${1-} == attach ]] && attach_session
+
+# --- parcours : dépôt d'abord, skill ensuite --------------------------------
+skill=${1-}; shift 2>/dev/null || true
+
+case "$skill" in
+  auto-dev|implement-issue|merge-pr|create-issue|triage-backlog|setup-repo|get-repo-profile) gh_only=github ;;
+  *) gh_only="" ;;
+esac
+
+repo=$(pick_repo "$gh_only") || exit 0
+[[ -n $repo && -d $repo ]] || exit 0
+
+nwo=$(nwo_of "$repo")
+freshen "$nwo" "$repo"
+counts_of "$nwo"
+
+if [[ -z $skill ]]; then
+  skill=$(pick_skill "$repo" "$nwo") || exit 0
+  [[ -n $skill ]] || exit 0
+  [[ $skill == __attach ]] && attach_session "aikit-$(slug_of "$repo")"
+fi
+
+launch() { # <titre> <dépôt> <prompt>
+  local title="$1" repo="$2" prompt="$3" session
+  session="aikit-$(slug_of "$repo")"
+  mkdir -p "$AIKIT_CACHE/notified"
+  rm -f "$AIKIT_CACHE/notified/$session"
+  notify "$title" "$(basename "$repo")  ·  tmux: $session"
+  exec omarchy-launch-tui --app-id=org.omarchy.aikit \
+    "$HOME/.local/bin/aikit" --exec "$session" "$repo" "$prompt"
+}
+
+case "$skill" in
+  auto-dev)
+    eligible_note=""; ((ELIGIBLE > 0)) && eligible_note=$(t agents_eligible "$ELIGIBLE")
+    n=$(ask "$(t agents_prompt "$eligible_note")") || exit 0
+    n=${n:-3}
+    mkdir -p "$AIKIT_STATE_DIR"
+    launch "auto-dev · $n agents" "$repo" \
+      "/ai-migration-kit:auto-dev $n agents, effort small d'abord puis medium. Tiens le state file de la flotte dans $AIKIT_STATE_DIR/$(slug_of "$repo").md (crée-le au démarrage, garde-le à jour à chaque dispatch et à chaque merge)."
+    ;;
+  implement-issue)
+    n=$(pick_number "$repo" "$nwo" issues "$(t issue_prompt)") || exit 0
+    [[ -n $n ]] || exit 0
+    launch "implement-issue #$n" "$repo" "/ai-migration-kit:implement-issue $n"
+    ;;
+  merge-pr)
+    n=$(pick_number "$repo" "$nwo" prs "$(t pr_prompt)") || exit 0
+    [[ -n $n ]] || exit 0
+    launch "merge-pr #$n" "$repo" "/ai-migration-kit:merge-pr $n"
+    ;;
+  create-issue)
+    idea=$(ask "$(t idea_prompt)") || exit 0
+    [[ -n $idea ]] || exit 0
+    launch "create-issue" "$repo" "/ai-migration-kit:create-issue $idea"
+    ;;
+  *)
+    launch "$skill" "$repo" "/ai-migration-kit:$skill $*"
+    ;;
+esac
