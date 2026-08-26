@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "phmatray.aikit",
+  "name": "AI Kit",
+  "version": "0.1.0",
+  "author": "Philippe Matray",
+  "description": "Bar widget for AI Kit: running Claude sessions, fleet progress, and sync health",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "AI Kit",
+    "description": "Sessions in flight, merges landed, and one click to the work queue",
+    "category": "Development",
+    "defaultSection": "right",
+    "allowMultiple": false
+  }
+}
