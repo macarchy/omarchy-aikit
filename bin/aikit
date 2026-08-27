@@ -18,7 +18,7 @@
 # reconstitué en redécoupant le texte montré à l'utilisateur.
 #
 # Réglages : AIKIT_ROOTS        racines de recherche des dépôts
-#            AIKIT_CLAUDE_FLAGS défaut : --permission-mode acceptEdits
+#            AIKIT_CLAUDE_FLAGS défaut : --permission-mode auto
 #            AIKIT_LANG         en / fr (défaut : la locale du système)
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -73,7 +73,7 @@ default_roots() {
   printf '%s\n' "${found[*]}"
 }
 AIKIT_ROOTS=${AIKIT_ROOTS:-$(default_roots)}
-AIKIT_CLAUDE_FLAGS=${AIKIT_CLAUDE_FLAGS:---permission-mode acceptEdits}
+AIKIT_CLAUDE_FLAGS=${AIKIT_CLAUDE_FLAGS:---permission-mode auto}
 AIKIT_CACHE=${AIKIT_CACHE:-$HOME/.cache/aikit}
 AIKIT_STATE_DIR="$AIKIT_CACHE/state"
 AIKIT_SORT_FILE="$AIKIT_CACHE/sort"
@@ -181,6 +181,12 @@ doctor() {
   done
   line claude "$(command -v claude >/dev/null && echo ok || echo no)" \
        "https://claude.com/claude-code"
+  # Le mode auto est récent : sans lui, chaque session s'ouvrirait sur une
+  # erreur de commande. On lit les choix annoncés par claude lui-même.
+  command -v claude >/dev/null &&
+    line "claude auto mode" \
+         "$(claude --help 2>/dev/null | grep -q '"auto"' && echo ok || echo no)" \
+         "$(t doctor_hint_auto)"
   line gh "$(command -v gh >/dev/null && echo ok || echo no)" "$(t doctor_hint_gh)"
   command -v gh >/dev/null &&
     line "gh auth" "$(gh auth status >/dev/null 2>&1 && echo ok || echo no)" "gh auth login"

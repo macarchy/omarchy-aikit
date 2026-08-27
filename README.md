@@ -167,7 +167,7 @@ locale, `AIKIT_LANG=fr` forces it.
 | Variable | Default | Effect |
 |---|---|---|
 | `AIKIT_ROOTS` | guessed from the usual places | where to look for clones |
-| `AIKIT_CLAUDE_FLAGS` | `--permission-mode acceptEdits` | flags passed to `claude` |
+| `AIKIT_CLAUDE_FLAGS` | `--permission-mode auto` | flags passed to `claude` |
 | `AIKIT_LANG` | locale | `en` or `fr` |
 | `AIKIT_STALL_SECS` | `300` | silence after which an agent is deemed stuck |
 | `AIKIT_SYNC_STALE_SECS` | `1200` | age after which syncing is reported as late |
