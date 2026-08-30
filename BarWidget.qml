@@ -26,6 +26,15 @@ Item {
   readonly property string command: settings && settings.exec ? settings.exec : "aikit-status"
   readonly property string launcher: settings && settings.launcher ? settings.launcher : "aikit"
 
+  // En barre transparente, le shell échantillonne le fond d'écran et bascule
+  // les widgets intégrés sur `barForeground` (couleur de contraste) ;
+  // `foreground` reste la couleur brute du thème, ce qui laissait l'icône
+  // blanche quand toutes les autres passaient au noir. On suit donc la même
+  // propriété que les widgets intégrés, avec repli pour les shells plus vieux.
+  readonly property color normalColor: bar
+      ? (bar.barForeground !== undefined ? bar.barForeground : bar.foreground)
+      : "white"
+
   implicitWidth: label.implicitWidth + 12
   implicitHeight: bar ? bar.barSize : 26
 
@@ -37,7 +46,7 @@ Item {
     font.pixelSize: 13
     color: root.statusClass === "urgent" || root.statusClass === "warning"
            ? (bar ? bar.urgent : "#ff6b6b")
-           : (bar ? bar.foreground : "white")
+           : root.normalColor
 
     Behavior on color { ColorAnimation { duration: 120 } }
   }
