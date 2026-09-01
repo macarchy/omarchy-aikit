@@ -23,7 +23,8 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-AIKIT_VERSION="0.1.0"
+AIKIT_VERSION="0.2.0"
+KIT_MIN="2.0.0"           # les noms de skills utilisés ici n'existent qu'à partir de là
 
 # Où suis-je ? Le chemin sert à se relancer dans tmux : il doit rester valable
 # aussi bien depuis ~/.local/bin que depuis /usr/bin ou une copie de travail.
@@ -94,11 +95,14 @@ G_AUTODEV=$'\U000F14DE'   # 🚀 fusée
 G_IMPLEMENT=$''     # </> code
 G_MERGE=$''         # ᛦ  git-merge
 G_CREATE=$''        # ✎  éditer
+G_PLAN=$'\uF0AE'       # ☑  liste de tâches
+G_GRILL=$'\uF075'      # 💬 interview
 G_TRIAGE=$'\U000F0232'    # ⏳ entonnoir
 G_SETUP=$''         # ⚙  engrenage
 G_PROFILE=$''       # 🔧 clé
 G_FOLLOWUPS=$''     # ☑  case cochée
 G_ASSESS=$''        # 🔍 loupe
+G_AUDIT=$'\uF201'      # 📈 audit chiffré
 G_MIGRATE=$'\U000F0450'   # ↻  cycle
 G_SORT=$''          # ⇅  tri
 G_WORK=$'\uF03A'       # ☰  file de travail
@@ -149,7 +153,7 @@ aikit $AIKIT_VERSION — run AI Migration Kit skills from the desktop.
 
   aikit                 pick a repository, then a skill
   aikit work            what is waiting for you, across every repository
-  aikit <skill> [args]  force the skill (auto-dev, implement-issue, merge-pr…)
+  aikit <skill> [args]  force the skill (auto-dev, implement-issue, merge-pr, plan-issue…)
   aikit attach          re-attach a running session
   aikit sync            force a database sync
   aikit setup           install the Omarchy entries (menu, bar widget)
@@ -164,6 +168,12 @@ Settings (environment variables, or $AIKIT_CONFIG):
   AIKIT_STALL_SECS     silence after which an agent is deemed stuck
 USAGE
 }
+
+kit_version() { # la plus haute version du kit en cache (vide s'il est absent)
+  ls -d "$HOME"/.claude/plugins/cache/*/ai-migration-kit/*/ 2>/dev/null |
+    xargs -rn1 basename | sort -V | tail -1 || true      # absent : vide, pas une erreur
+}
+version_ge() { [[ $(printf '%s\n' "$1" "$2" | sort -V | head -1) == "$2" ]]; }   # $1 ≥ $2
 
 doctor() {
   local ok=0 miss=0
@@ -190,9 +200,10 @@ doctor() {
   line gh "$(command -v gh >/dev/null && echo ok || echo no)" "$(t doctor_hint_gh)"
   command -v gh >/dev/null &&
     line "gh auth" "$(gh auth status >/dev/null 2>&1 && echo ok || echo no)" "gh auth login"
-  line "ai-migration-kit" \
-       "$(ls -d "$HOME"/.claude/plugins/cache/*/ai-migration-kit/* >/dev/null 2>&1 && echo ok || echo no)" \
-       "$(t doctor_hint_kit)"
+  local kv; kv=$(kit_version)
+  line "ai-migration-kit >= $KIT_MIN" \
+       "$( [[ -n $kv ]] && version_ge "$kv" "$KIT_MIN" && echo ok || echo no)" \
+       "$( [[ -n $kv ]] && t doctor_hint_kit_old "$kv" || t doctor_hint_kit)"
   line "omarchy-menu-select" "$(command -v omarchy-menu-select >/dev/null && echo ok || echo no)" \
        "https://omarchy.org"
   local n; n=$(list_repos | wc -l)
@@ -322,7 +333,7 @@ freshen() { # <nwo> <chemin> — suit le dépôt, puis rafraîchit en arrière-p
   ( aikit-sync --repo "$1" >/dev/null 2>&1 & ) || true
 }
 
-pick_number() { # <dépôt> <nwo> <issues|prs> <invite> -> numéro choisi
+pick_number() { # <dépôt> <nwo> <issues|unplanned|prs> <invite> -> numéro choisi
   local repo="$1" nwo="$2" kind="$3" prompt="$4" rows=() key age=""
   [[ -n $nwo ]] || { ask "$(t ask_number "$prompt")"; return; }
   if ((AGE < 0)); then                       # jamais synchronisé en détail
@@ -343,7 +354,7 @@ pick_number() { # <dépôt> <nwo> <issues|prs> <invite> -> numéro choisi
 q() { (($1 < 0)) && echo "?" || echo "$1"; }   # compteur pas encore connu
 
 pick_skill() { # <dépôt> <nwo> -> identifiant de skill
-  local repo="$1" nwo="$2" rows=() session
+  local repo="$1" nwo="$2" rows=() session unplanned
 
   session=$(sessions_of "$(session_base "$repo" "$nwo")" | head -1)
   [[ -n $session ]] &&
@@ -354,17 +365,30 @@ pick_skill() { # <dépôt> <nwo> -> identifiant de skill
     rows+=("$(row "implement-issue"  "$G_IMPLEMENT" "$(t skill_implement)" "$(t skill_implement_d "$(q "$PLANNED")")")")
     rows+=("$(row "merge-pr"         "$G_MERGE"     "$(t skill_merge)"     "$(t skill_merge_d "$(q "$PRS")" "$(q "$PRS_RED")")")")
     rows+=("$(row "create-issue"     "$G_CREATE"    "$(t skill_create)"    "$(t skill_create_d)")")
+    unplanned=$(( PLANNED < 0 ? -1 : ISSUES - PLANNED ))
+    rows+=("$(row "plan-issue"       "$G_PLAN"      "$(t skill_plan)"      "$(t skill_plan_d "$(q "$unplanned")")")")
     rows+=("$(row "triage-backlog"   "$G_TRIAGE"    "$(t skill_triage)"    "$(t skill_triage_d "$(q "$ISSUES")")")")
     rows+=("$(row "setup-repo"       "$G_SETUP"     "$(t skill_setup)"     "$(t skill_setup_d)")")
-    rows+=("$(row "get-repo-profile" "$G_PROFILE"   "$(t skill_profile)"   "$(t skill_profile_d)")")
+    rows+=("$(row "profile-repo"     "$G_PROFILE"   "$(t skill_profile)"   "$(t skill_profile_d)")")
   fi
-  rows+=("$(row "followups"      "$G_FOLLOWUPS" "$(t skill_followups)" "$(t skill_followups_d)")")
-  rows+=("$(row "migrate-assess" "$G_ASSESS"    "$(t skill_assess)"    "$(t skill_assess_d)")")
-  rows+=("$(row "migrate"        "$G_MIGRATE"   "$(t skill_migrate)"   "$(t skill_migrate_d)")")
+  rows+=("$(row "review-followups" "$G_FOLLOWUPS" "$(t skill_followups)" "$(t skill_followups_d)")")
+  rows+=("$(row "migrate-assess"   "$G_ASSESS"    "$(t skill_assess)"    "$(t skill_assess_d)")")
+  rows+=("$(row "migrate-audit"    "$G_AUDIT"     "$(t skill_audit)"     "$(t skill_audit_d)")")
+  rows+=("$(row "migrate"          "$G_MIGRATE"   "$(t skill_migrate)"   "$(t skill_migrate_d)")")
 
   rows+=("$(row "__back" "$G_BACK" "$(t back_row)" "$(t back_hint)")")
   MENU_ARGS=(--width 880 --height 560)
   menu_pick "$(basename "$repo")" "${rows[@]}"
+}
+
+pick_grill() { # -> " --grill" si l'utilisateur veut l'interview d'abord, vide sinon ; 1 = retour
+  local rows=() sel
+  rows+=("$(row "write" "$G_CREATE" "$(t grill_no)"  "$(t grill_no_d)")")
+  rows+=("$(row "grill" "$G_GRILL"  "$(t grill_yes)" "$(t grill_yes_d)")")
+  MENU_ARGS=(--width 720 --height 220)
+  sel=$(menu_pick "$(t grill_prompt)" "${rows[@]}") || return 1
+  [[ $sel == grill ]] && printf ' --grill'
+  return 0
 }
 
 # --- réattachement ----------------------------------------------------------
@@ -469,12 +493,12 @@ skill=${1-}; shift 2>/dev/null || true
 SKILL_ARGS=("$@")          # arguments passés à la skill en ligne de commande
 
 case "$skill" in
-  auto-dev|implement-issue|merge-pr|create-issue|triage-backlog|setup-repo|get-repo-profile) gh_only=github ;;
+  auto-dev|implement-issue|merge-pr|create-issue|plan-issue|triage-backlog|setup-repo|profile-repo) gh_only=github ;;
   *) gh_only="" ;;
 esac
 
 run_skill() { # <dépôt> <nwo> <skill> -> 1 si l'utilisateur revient en arrière
-  local repo="$1" nwo="$2" skill="$3" n idea eligible_note state_slug prompt
+  local repo="$1" nwo="$2" skill="$3" n idea grill eligible_note state_slug prompt
 
   case "$skill" in
     auto-dev)
@@ -499,7 +523,14 @@ run_skill() { # <dépôt> <nwo> <skill> -> 1 si l'utilisateur revient en arrièr
     create-issue)
       idea=$(ask "$(t idea_prompt)") || return 1
       [[ -n $idea ]] || return 1
-      launch "create-issue" "$repo" "/ai-migration-kit:create-issue $idea"
+      grill=$(pick_grill) || return 1
+      launch "create-issue" "$repo" "/ai-migration-kit:create-issue$grill $idea"
+      ;;
+    plan-issue)                              # create-issue --seed : planifier une issue existante
+      n=$(pick_number "$repo" "$nwo" unplanned "$(t plan_prompt)") || return 1
+      [[ -n $n && $n != __back ]] || return 1
+      grill=$(pick_grill) || return 1
+      launch "plan-issue #$n" "$repo" "/ai-migration-kit:create-issue --seed #$n$grill"
       ;;
     *)
       prompt="/ai-migration-kit:$skill ${SKILL_ARGS[*]-}"
