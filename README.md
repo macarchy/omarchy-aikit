@@ -67,7 +67,7 @@ pending:
 git clone https://github.com/Atypical-Consulting/omarchy-aikit && cd omarchy-aikit
 ./install.sh                       # symlinks, systemd timer, Omarchy entries
 aikit doctor                       # prerequisites, one by one
-aikit-selftest                     # 32 checks, no network, no windows
+aikit-selftest                     # 52 checks, no network, no windows
 ```
 
 `./install.sh --dry-run` shows what it would touch; `./uninstall.sh` undoes
@@ -77,7 +77,8 @@ with a timestamp.
 `aikit doctor` checks the prerequisites one by one and says what to install:
 authenticated `gh`, `tmux`, `jq`, `python3`, `sqlite3`, `git`, `claude`, Omarchy,
 and the [ai-migration-kit](https://github.com/phmatray/ai-migration-kit) plugin
-on the Claude Code side — without it, the skills do not exist.
+on the Claude Code side, **version 2.0.0 or later** — without it, the skills do
+not exist (2.0 renamed several of them, with no aliases).
 
 Repository roots are guessed on first run from the usual places (`~/src`,
 `~/code`, `~/dev`, `~/git`, `~/repos`, `~/Projects`, `~/Work`, `~/Development`);

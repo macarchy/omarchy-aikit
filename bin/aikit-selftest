@@ -116,6 +116,10 @@ printf 'LAUNCH|%s\n' "$*"
 STUB
 printf '#!/bin/bash\nprintf "WEBAPP|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-webapp"
 printf '#!/bin/bash\nprintf "ATTACH|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-launch-or-focus-tui"
+# doctor ne doit ni toucher le réseau ni dépendre de la machine : gh et claude
+# répondent « tout va bien » sans rien vérifier.
+printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/gh"
+printf '#!/bin/bash\necho \x27modes: "auto"\x27\n' > "$sandbox/bin/claude"
 cat > "$sandbox/bin/notify-send" <<STUB
 #!/bin/bash
 printf '%s\n' "\$*" >> "$sandbox/notifylog"
@@ -196,11 +200,12 @@ printf 'recent\n' > "$sandbox/cache/sort"
 # --- 3. le menu des skills rend bien la skill -------------------------------
 echo "Skills"
 for pair in "Auto-dev:auto-dev" "Create an issue:create-issue" "Triage:triage-backlog" \
-            "Repository profile:get-repo-profile" "Full migration:migrate"; do
+            "Repository profile:profile-repo" "Open follow-ups:review-followups" \
+            "Executive audit:migrate-audit" "Full migration:migrate"; do
   label=${pair%%:*} skill=${pair#*:}
   case "$skill" in
     auto-dev)     out=$(flow "match:alpha" "match:$label" "2") ;;
-    create-issue) out=$(flow "match:alpha" "match:$label" "une idée") ;;
+    create-issue) out=$(flow "match:alpha" "match:$label" "une idée" "match:Write it now") ;;
     *)            out=$(flow "match:alpha" "match:$label") ;;
   esac
   check "« $label » lance $skill" "$skill" "$(launched "$out" | sed -n 's#.*/ai-migration-kit:\([a-z-]*\).*#\1#p')"
@@ -214,6 +219,29 @@ check "le numéro vient de la clé, pas du titre" "/ai-migration-kit:implement-i
 out=$(flow "match:alpha" "match:Merge a PR" "match:#111 fix")
 check "PR : idem" "/ai-migration-kit:merge-pr 77" \
       "$(launched "$out" | sed 's#^[^ ]* ##')"
+
+# --- 4 a. create-issue v2 : --seed sur une issue sans plan, --grill en option -
+echo "Planification"
+out=$(flow "match:alpha" "match:Plan an existing issue" "match:unplanned idea" "match:Write it now")
+check "issue sans plan → create-issue --seed" "/ai-migration-kit:create-issue --seed #34" \
+      "$(launched "$out" | sed 's#^[^ ]* ##')"
+out=$(flow "match:alpha" "match:Plan an existing issue" "match:#999 crash" "match:Write it now")
+check "une issue déjà planifiée n'est pas proposée" "" "$(launched "$out")"
+out=$(flow "match:alpha" "match:Plan an existing issue" "match:unplanned idea" "match:Interview me first")
+check "--grill se compose avec --seed" "/ai-migration-kit:create-issue --seed #34 --grill" \
+      "$(launched "$out" | sed 's#^[^ ]* ##')"
+out=$(flow "match:alpha" "match:Create an issue" "une idée" "match:Interview me first")
+check "--grill sur une idée neuve" "/ai-migration-kit:create-issue --grill une idée" \
+      "$(launched "$out" | sed 's#^[^ ]* ##')"
+out=$(flow "match:alpha" "match:Create an issue" "une idée" "match:Write it now")
+check "sans grill : prompt inchangé" "/ai-migration-kit:create-issue une idée" \
+      "$(launched "$out" | sed 's#^[^ ]* ##')"
+out=$(flow "match:alpha" "match:Create an issue" "une idée" "cancel" "match:Legacy audit")
+check "Échap au choix grill → retour au menu des skills" \
+      "$sandbox/repos/alpha /ai-migration-kit:migrate-assess" "$(launched "$out")"
+rm -f "$sandbox/trace"; VERBOSE=1 flow "match:alpha" "cancel" >/dev/null
+check "sous-titre : nombre d'issues sans plan" "1" \
+      "$(grep -c 'Plan an existing issue.*1 issues without a plan' "$sandbox/trace")"
 
 # --- 4 bis. file de travail transversale ------------------------------------
 echo "File de travail"
@@ -315,6 +343,23 @@ flow "cancel" >/dev/null
 FLOW_ENV=()
 check "fenêtre écoulée : on retente" "2" "$(grep -c -- "--repos --force" "$sandbox/synclog")"
 FLOW_DB="$sandbox/data/aikit.db"
+
+# --- 5 bis. doctor : le kit doit être en v2 (les noms de skills n'ont pas d'alias)
+echo "Doctor"
+kit_at() { # kit_at <version...> -> un $HOME factice avec ces versions du kit en cache
+  rm -rf "$sandbox/home"
+  for v in "$@"; do mkdir -p "$sandbox/home/.claude/plugins/cache/m/ai-migration-kit/$v"; done
+}
+kit_line() { FLOW_ENV=("HOME=$sandbox/home"); flow --args doctor | grep 'ai-migration-kit'; FLOW_ENV=(); }
+kit_at 1.15.0
+check "kit 1.15.0 → manquant, avec le conseil de mise à jour" "1" \
+      "$(kit_line | grep -c '✗.*2.0.0.*update')"
+kit_at 2.0.0
+check "kit 2.0.0 → ok" "1" "$(kit_line | grep -c '✓')"
+kit_at 1.15.0 2.1.0
+check "plusieurs versions en cache → la plus haute compte" "1" "$(kit_line | grep -c '✓')"
+kit_at
+check "kit absent → manquant" "1" "$(kit_line | grep -c '✗')"
 
 # --- 6. compteurs -----------------------------------------------------------
 echo "Compteurs"

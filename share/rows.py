@@ -184,9 +184,10 @@ def cmd_counts(db, nwo):
         print("%s=%d" % (k, v))
 
 
-def cmd_issues(db, nwo):
+def cmd_issues(db, nwo, unplanned_only=False):
     rows = []
-    for r in con(db).execute("SELECT * FROM issues WHERE nwo = ?", (nwo,)):
+    where = "nwo = ?" + (" AND planned = 0" if unplanned_only else "")
+    for r in con(db).execute("SELECT * FROM issues WHERE " + where, (nwo,)):
         labels = json.loads(r["labels"])
         effort = next((l for l in labels if l.startswith("effort:")), None)
         prio = next((l for l in labels if l.startswith("priority:")), None)
@@ -280,6 +281,8 @@ if __name__ == "__main__":
         cmd_counts(db, sys.argv[3])
     elif cmd == "issues":
         cmd_issues(db, sys.argv[3])
+    elif cmd == "unplanned":
+        cmd_issues(db, sys.argv[3], unplanned_only=True)
     elif cmd == "prs":
         cmd_prs(db, sys.argv[3])
     else:

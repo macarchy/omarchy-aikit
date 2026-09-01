@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "atypical.aikit",
   "name": "AI Kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Atypical Consulting",
   "description": "Bar widget for AI Kit: running Claude sessions, fleet progress, and sync health",
   "kinds": [
