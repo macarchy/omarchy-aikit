@@ -55,5 +55,7 @@ if [[ $DRY != --dry-run ]]; then
 fi
 echo
 echo "Done. Check with:  aikit-selftest"
-echo "Keybinding: add to ~/.config/hypr/bindings.lua"
+echo "Keybindings: add to ~/.config/hypr/bindings.lua"
 echo '  o.bind("SUPER + CTRL + M", "AI Kit", "aikit")'
+echo '  hl.unbind("SUPER + SHIFT + CTRL + A")   -- Omarchy: omarchy-agent --pick'
+echo '  o.bind("SUPER + SHIFT + CTRL + A", "Claude (worktree)", "aikit claude")'

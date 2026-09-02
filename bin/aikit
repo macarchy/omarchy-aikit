@@ -4,11 +4,12 @@
 #
 #   aikit                    dépôt → skill → paramètres (parcours principal)
 #   aikit work               ce qui m'attend, tous dépôts confondus
+#   aikit claude             dépôt → session Claude libre dans un worktree neuf
 #   aikit <skill>            raccourci : skill imposée, dépôt demandé
 #   aikit attach             réattache une session aikit en cours
 #   aikit sync               force une synchronisation de la base
-#   aikit --exec <s> <d> <p> interne : ouvre la session tmux
-#   aikit --run <d> <p> <s>  interne : lance claude et notifie à la fin
+#   aikit --exec <s> <d> <p> [flag...]  interne : ouvre la session tmux
+#   aikit --run <d> <p> <s> [flag...]   interne : lance claude et notifie à la fin
 #
 # Les menus ne touchent jamais le réseau : tout vient de la base locale
 # (~/.local/share/aikit/aikit.db) tenue à jour par aikit-sync.timer.
@@ -18,7 +19,7 @@
 # reconstitué en redécoupant le texte montré à l'utilisateur.
 #
 # Réglages : AIKIT_ROOTS        racines de recherche des dépôts
-#            AIKIT_CLAUDE_FLAGS défaut : --permission-mode auto
+#            AIKIT_CLAUDE_FLAGS défaut : --dangerously-skip-permissions
 #            AIKIT_LANG         en / fr (défaut : la locale du système)
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -74,7 +75,10 @@ default_roots() {
   printf '%s\n' "${found[*]}"
 }
 AIKIT_ROOTS=${AIKIT_ROOTS:-$(default_roots)}
-AIKIT_CLAUDE_FLAGS=${AIKIT_CLAUDE_FLAGS:---permission-mode auto}
+# Les sessions lancées d'ici tournent sans surveillance : Claude ne doit pas
+# s'arrêter pour demander. Le mode auto (classifieur) laissait encore passer
+# des questions ; l'utilisateur a tranché pour la version sans garde-fou.
+AIKIT_CLAUDE_FLAGS=${AIKIT_CLAUDE_FLAGS:---dangerously-skip-permissions}
 AIKIT_CACHE=${AIKIT_CACHE:-$HOME/.cache/aikit}
 AIKIT_STATE_DIR="$AIKIT_CACHE/state"
 AIKIT_SORT_FILE="$AIKIT_CACHE/sort"
@@ -85,12 +89,16 @@ AIKIT_SEED_STAMP="$AIKIT_CACHE/seeded"   # dernière tentative d'amorçage
 # d'ailleurs (/usr/share en lecture seule, ou une copie de travail du dépôt) :
 # le lanceur réamorçait alors la base à chaque clic dans la barre.
 AIKIT_DATA=${AIKIT_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/aikit}
+# Où Claude Code note les dépôts « trusted » (lu seulement, jamais écrit).
+AIKIT_CLAUDE_JSON=${AIKIT_CLAUDE_JSON:-${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json}
 AIKIT_DB=${AIKIT_DB:-$AIKIT_DATA/aikit.db}
 ROWS="$AIKIT_SHARE/rows.py"
 
 # Glyphes en points de code : un glyphe collé ne survit pas toujours au trajet
 # jusqu'au fichier. Tous vérifiés présents dans JetBrainsMono Nerd Font.
 G_RESUME=$''        # ▶  reprendre
+G_CLAUDE=$'\U000F018D'    # >_ console : session Claude libre
+G_TRUST=$'\uF023'       # 🔒 confiance
 G_AUTODEV=$'\U000F14DE'   # 🚀 fusée
 G_IMPLEMENT=$''     # </> code
 G_MERGE=$''         # ᛦ  git-merge
@@ -153,6 +161,7 @@ aikit $AIKIT_VERSION — run AI Migration Kit skills from the desktop.
 
   aikit                 pick a repository, then a skill
   aikit work            what is waiting for you, across every repository
+  aikit claude          pick a repository, open Claude in a fresh git worktree
   aikit <skill> [args]  force the skill (auto-dev, implement-issue, merge-pr, plan-issue…)
   aikit attach          re-attach a running session
   aikit sync            force a database sync
@@ -191,12 +200,15 @@ doctor() {
   done
   line claude "$(command -v claude >/dev/null && echo ok || echo no)" \
        "https://claude.com/claude-code"
-  # Le mode auto est récent : sans lui, chaque session s'ouvrirait sur une
-  # erreur de commande. On lit les choix annoncés par claude lui-même.
+  # Les flags passés à chaque session doivent exister, sinon chaque session
+  # s'ouvrirait sur une erreur de commande. On lit l'aide de claude lui-même.
   command -v claude >/dev/null &&
-    line "claude auto mode" \
-         "$(claude --help 2>/dev/null | grep -q '"auto"' && echo ok || echo no)" \
-         "$(t doctor_hint_auto)"
+    line "claude flags" \
+         "$(help=$(claude --help 2>/dev/null); ok=ok
+            for f in $AIKIT_CLAUDE_FLAGS --worktree; do
+              [[ $f == -* ]] && ! grep -q -- "$f" <<<"$help" && ok=no
+            done; echo $ok)" \
+         "$(t doctor_hint_flags "$AIKIT_CLAUDE_FLAGS")"
   line gh "$(command -v gh >/dev/null && echo ok || echo no)" "$(t doctor_hint_gh)"
   command -v gh >/dev/null &&
     line "gh auth" "$(gh auth status >/dev/null 2>&1 && echo ok || echo no)" "gh auth login"
@@ -223,13 +235,15 @@ esac
 
 # --- modes internes ---------------------------------------------------------
 if [[ ${1-} == --exec ]]; then
-  exec tmux new-session -s "$2" -c "$3" "$SELF" --run "$3" "$4" "$2"
+  exec tmux new-session -s "$2" -c "$3" "$SELF" --run "$3" "$4" "$2" "${@:5}"
 fi
 
 if [[ ${1-} == --run ]]; then
   dir="$2" prompt="$3" session="${4-}" rc=0
+  flags=("${@:5}")                         # flags propres à ce lancement (--worktree…)
+  args=(); [[ -n $prompt ]] && args+=("$prompt")   # sans prompt : Claude ouvre vide
   repo=$(basename "$dir")
-  claude $AIKIT_CLAUDE_FLAGS "$prompt" || rc=$?
+  claude $AIKIT_CLAUDE_FLAGS "${flags[@]}" "${args[@]}" || rc=$?
   [[ -n $session ]] && rm -f "$AIKIT_CACHE/notified/$session"
   if ((rc == 0)); then
     notify "$(t done_ok_title "$repo")" "$(t done_ok_body)"
@@ -304,11 +318,13 @@ pick_repo() { # -> chemin du dépôt choisi
   local rows=() key mode
   while :; do
     mode=$(sort_mode)
+    # La ligne « Tri » ferme la liste : la première ligne, celle qu'Entrée
+    # prend d'emblée, doit être un dépôt — le plus récent.
     mapfile -t rows < <(
-      row "__sort__" "$G_SORT" "$(t sort_row "$(t "sort_$mode")")" "$(t sort_hint)"
       AIKIT_SESSIONS="$(tmux list-sessions -F '#{session_name}' 2>/dev/null |
                         sed -n 's/^aikit-//p' | tr '\n' ' ')" \
-      list_repos "${1-}" | python3 "$ROWS" repos "$AIKIT_DB" "$mode")
+      list_repos "${1-}" | python3 "$ROWS" repos "$AIKIT_DB" "$mode"
+      row "__sort__" "$G_SORT" "$(t sort_row "$(t "sort_$mode")")" "$(t sort_hint)")
     ((${#rows[@]} > 1)) || die "$(t "${1:+no_repo_gh}${1:-no_repo}" "$AIKIT_ROOTS")"
     MENU_ARGS=(--width 760 --height 520)
     key=$(menu_pick "$(t repo_prompt)" "${rows[@]}") || return 1
@@ -360,6 +376,9 @@ pick_skill() { # <dépôt> <nwo> -> identifiant de skill
   [[ -n $session ]] &&
     rows+=("$(row "__attach|$session" "$G_RESUME" "$(t skill_resume)" "$(t skill_resume_d "$session")")")
 
+  # Sans skill : Claude seul, dans un worktree neuf pour ne rien salir.
+  rows+=("$(row "claude" "$G_CLAUDE" "$(t skill_claude)" "$(t skill_claude_d)")")
+
   if [[ -n $nwo ]]; then
     rows+=("$(row "auto-dev"         "$G_AUTODEV"   "$(t skill_autodev)"   "$(t skill_autodev_d "$(q "$ELIGIBLE")")")")
     rows+=("$(row "implement-issue"  "$G_IMPLEMENT" "$(t skill_implement)" "$(t skill_implement_d "$(q "$PLANNED")")")")
@@ -391,6 +410,29 @@ pick_grill() { # -> " --grill" si l'utilisateur veut l'interview d'abord, vide s
   return 0
 }
 
+# --- confiance Claude Code --------------------------------------------------
+# `claude --worktree` refuse un dépôt que Claude Code n'a pas encore « trusted »,
+# et cette confiance ne se note qu'au cours d'une session ordinaire (en mode
+# sans garde-fou, sans même de dialogue). La réponse lui appartient : on ne
+# l'écrit jamais à sa place. On lit seulement l'état et, s'il manque, on
+# propose une première session dans le checkout lui-même ; le worktree vient
+# dès la session suivante. Le menu existe pour dire pourquoi, cette fois, le
+# checkout — et pas un worktree.
+trusted() { # trusted <dépôt>
+  [[ -f $AIKIT_CLAUDE_JSON ]] &&
+    jq -e --arg d "$1" '.projects[$d].hasTrustDialogAccepted == true' "$AIKIT_CLAUDE_JSON" >/dev/null 2>&1
+}
+
+pick_trust() { # pick_trust <dépôt> -> "checkout" si l'utilisateur accepte ; 1 = retour
+  local repo="$1" rows=() sel
+  rows+=("$(row "checkout" "$G_TRUST" "$(t trust_yes)" "$(t trust_yes_d)")")
+  rows+=("$(row "__back" "$G_BACK" "$(t back_row)" "$(t back_hint)")")
+  MENU_ARGS=(--width 800 --height 220)
+  sel=$(menu_pick "$(t trust_prompt "$(basename "$repo")")" "${rows[@]}") || return 1
+  [[ $sel == checkout ]] || return 1
+  printf '%s\n' "$sel"
+}
+
 # --- réattachement ----------------------------------------------------------
 attach_session() {
   local sel="${1-}" rows=() s sessions=()
@@ -416,14 +458,15 @@ attach_session() {
   exec omarchy-launch-or-focus-tui --app-id=org.omarchy.aikit "tmux attach -t $sel"
 }
 
-launch() { # <titre> <dépôt> <prompt> — une session neuve, jamais un rattachement
+launch() { # <titre> <dépôt> <prompt> [flag...] — une session neuve, jamais un rattachement
   local title="$1" repo="$2" prompt="$3" session
+  local flags=("${@:4}")                   # flags claude propres à ce lancement
   session=$(free_session "$(session_base "$repo" "$(nwo_of "$repo")")")
   mkdir -p "$AIKIT_CACHE/notified" "$AIKIT_CACHE/done"
   rm -f "$AIKIT_CACHE/notified/$session" "$AIKIT_CACHE/done/$session"
   notify "$title" "$(basename "$repo")  ·  tmux: $session"
   exec omarchy-launch-tui --app-id=org.omarchy.aikit \
-    "$SELF" --exec "$session" "$repo" "$prompt"
+    "$SELF" --exec "$session" "$repo" "$prompt" "${flags[@]}"
 }
 
 # --- boîte de travail transversale ------------------------------------------
@@ -501,6 +544,16 @@ run_skill() { # <dépôt> <nwo> <skill> -> 1 si l'utilisateur revient en arrièr
   local repo="$1" nwo="$2" skill="$3" n idea grill eligible_note state_slug prompt
 
   case "$skill" in
+    claude)
+      # Session libre : pas de prompt, un worktree git neuf (Claude le nomme
+      # et le crée sous .claude/worktrees/ ; il le retire s'il reste intact).
+      if trusted "$repo"; then
+        launch "Claude" "$repo" "" --worktree
+      else
+        pick_trust "$repo" >/dev/null || return 1
+        launch "$(t trust_title)" "$repo" ""     # dans le checkout : Claude note la confiance
+      fi
+      ;;
     auto-dev)
       eligible_note=""; ((ELIGIBLE > 0)) && eligible_note=$(t agents_eligible "$ELIGIBLE")
       n=$(ask "$(t agents_prompt "$eligible_note")") || return 1

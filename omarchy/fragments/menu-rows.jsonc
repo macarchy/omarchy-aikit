@@ -1,4 +1,5 @@
   "aikit":        {"icon":"󱓞", "label":"AI Kit", "aliases":["ai","kit","skills","depot","repo"], "description":"Pick a repository, then a skill from the AI Migration Kit", "action":"aikit"},
+  "aikit-claude": {"icon":"󰆍", "label":"AI Kit · Claude", "aliases":["claude","worktree","session"], "description":"Open Claude alone, in a fresh git worktree of a repository", "action":"aikit claude"},
   "aikit-work":   {"icon":"", "label":"AI Kit · work queue", "aliases":["work","todo","queue"], "description":"Failing CI, reviews, your PRs, assigned and planned issues — across all repos", "action":"aikit work"},
   "aikit-resume": {"icon":"", "label":"Resume AI Kit session", "aliases":["aikit-attach"], "description":"Re-attach a running aikit session", "action":"aikit attach", "when":"tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -q '^aikit-'"},
   "aikit-sync":   {"icon":"󰑐", "label":"AI Kit · refresh data", "description":"Force a GitHub sync of the local AI Kit database", "action":"aikit sync"},

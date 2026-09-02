@@ -125,7 +125,7 @@ def cmd_repos(db, mode="recent"):
             for glyph, value in ((G_STAR, st["stars"] if st else 0),
                                  (G_ISSUE, st["open_issues"] if st else 0),
                                  (G_PR, st["open_prs"] if st else 0)))
-        bits = [counters.rstrip() or " "]
+        bits = [counters.rstrip()] if counters.strip() else []
         # le propriétaire lève l'ambiguïté entre deux dépôts de même nom
         bits.append(nwo.split("/")[0] if nwo else tilde(str(pathlib.Path(path).parent)))
         if st and st["pushed_at"]:

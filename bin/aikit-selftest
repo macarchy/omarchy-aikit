@@ -119,7 +119,8 @@ printf '#!/bin/bash\nprintf "ATTACH|%%s\\n" "$*"\n' > "$sandbox/bin/omarchy-laun
 # doctor ne doit ni toucher le réseau ni dépendre de la machine : gh et claude
 # répondent « tout va bien » sans rien vérifier.
 printf '#!/bin/bash\nexit 0\n' > "$sandbox/bin/gh"
-printf '#!/bin/bash\necho \x27modes: "auto"\x27\n' > "$sandbox/bin/claude"
+# le vrai `claude --help` liste ses flags : doctor y cherche ceux qu'on passe
+printf '#!/bin/bash\necho "--dangerously-skip-permissions --worktree"\n' > "$sandbox/bin/claude"
 cat > "$sandbox/bin/notify-send" <<STUB
 #!/bin/bash
 printf '%s\n' "\$*" >> "$sandbox/notifylog"
@@ -154,7 +155,7 @@ flow() { # flow [--args <arg>] <choix...> -> sortie d'aikit (dont la ligne LAUNC
   env -u AIKIT_DB -u XDG_DATA_HOME \
   PATH="$sandbox/bin:$HOME/.local/bin:$PATH" \
   PICKS="$sandbox/picks" TRACE="${VERBOSE:+$sandbox/trace}" SESSIONS="$sandbox/sessions" \
-  AIKIT_SHARE="$sandbox/share" \
+  AIKIT_SHARE="$sandbox/share" AIKIT_CLAUDE_JSON="$sandbox/claude.json" \
   AIKIT_CACHE="$sandbox/cache" AIKIT_ROOTS="$sandbox/repos" AIKIT_LANG=en \
   "${db[@]}" "${FLOW_ENV[@]}" \
     ${AIKIT_XTRACE:+bash -x} "$AIKIT_BIN" "${args[@]}" 2>"$sandbox/err"
@@ -189,11 +190,11 @@ check "dépôt sans remote GitHub" "$sandbox/repos/local-only /ai-migration-kit:
 
 # --- 2. tri ------------------------------------------------------------------
 echo "Tri"
-out=$(flow "match:Sort:" "match:stars" "index:1" "match:Legacy audit")
+out=$(flow "match:Sort:" "match:stars" "index:0" "match:Legacy audit")
 check "tri par étoiles : beta (90) en tête" "$sandbox/repos/beta project /ai-migration-kit:migrate-assess" "$(launched "$out")"
 check "tri mémorisé" "stars" "$(cat "$sandbox/cache/sort")"
 
-out=$(flow "match:Sort:" "match:open issues" "index:1" "match:Legacy audit")
+out=$(flow "match:Sort:" "match:open issues" "index:0" "match:Legacy audit")
 check "tri par issues : gamma (40) en tête" "$sandbox/repos/gamma · delta /ai-migration-kit:migrate-assess" "$(launched "$out")"
 printf 'recent\n' > "$sandbox/cache/sort"
 
@@ -243,6 +244,45 @@ rm -f "$sandbox/trace"; VERBOSE=1 flow "match:alpha" "cancel" >/dev/null
 check "sous-titre : nombre d'issues sans plan" "1" \
       "$(grep -c 'Plan an existing issue.*1 issues without a plan' "$sandbox/trace")"
 
+# --- 4 quinquies. session Claude libre : pas de prompt, un worktree neuf ----
+# La ligne LAUNCH porte "--exec <session> <dépôt> <prompt> [flags]" ; un prompt
+# vide laisse un champ vide entre le dépôt et les flags.
+echo "Session Claude"
+# alpha est déjà « trusted » par Claude Code, local-only ne l'est pas encore
+printf '{"projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$sandbox/repos/alpha" > "$sandbox/claude.json"
+out=$(flow "match:	alpha	" "match:Open Claude")
+check "« Open Claude » : dépôt, prompt vide, --worktree" \
+      "$sandbox/repos/alpha  --worktree" "$(launched "$out")"
+out=$(flow --args claude "match:	alpha	")
+check "aikit claude : dépôt demandé, pas de menu des skills" \
+      "$sandbox/repos/alpha  --worktree" "$(launched "$out")"
+out=$(flow "match:local-only" "match:Open Claude" "match:Open Claude in the checkout")
+check "pas encore trusted → question, puis session dans le checkout, sans worktree" \
+      "$sandbox/repos/local-only " "$(launched "$out")"
+check "la confiance reste à Claude : rien n'est écrit" "false" \
+      "$(jq -r --arg d "$sandbox/repos/local-only" '.projects[$d] != null' "$sandbox/claude.json")"
+out=$(flow "match:local-only" "match:Open Claude" "match:Back" "match:Legacy audit")
+check "refus → retour au menu des skills" \
+      "$sandbox/repos/local-only /ai-migration-kit:migrate-assess" "$(launched "$out")"
+rm -f "$sandbox/claude.json"
+out=$(flow --args claude "match:	alpha	" "cancel")
+check "sans ~/.claude.json : personne n'est trusted, Échap sort" "" "$(launched "$out")"
+# --run : le prompt vide ne doit pas devenir un argument "" pour claude
+cat > "$sandbox/bin/claude" <<'STUB'
+#!/bin/bash
+printf 'CLAUDE|%d|%s\n' "$#" "$*"
+STUB
+chmod +x "$sandbox/bin/claude"
+out=$(PATH="$sandbox/bin:$PATH" AIKIT_CACHE="$sandbox/cache" AIKIT_SHARE="$sandbox/share" AIKIT_LANG=en \
+      "$AIKIT_BIN" --run "$sandbox/repos/alpha" "" "" --worktree </dev/null 2>/dev/null | grep '^CLAUDE|')
+check "--run sans prompt : claude reçoit les flags seuls" \
+      "CLAUDE|2|--dangerously-skip-permissions --worktree" "$out"
+out=$(PATH="$sandbox/bin:$PATH" AIKIT_CACHE="$sandbox/cache" AIKIT_SHARE="$sandbox/share" AIKIT_LANG=en \
+      "$AIKIT_BIN" --run "$sandbox/repos/alpha" "/x y" "" </dev/null 2>/dev/null | grep '^CLAUDE|')
+check "--run avec prompt : flags puis prompt" \
+      "CLAUDE|2|--dangerously-skip-permissions /x y" "$out"
+printf '#!/bin/bash\necho "--dangerously-skip-permissions --worktree"\n' > "$sandbox/bin/claude"
+
 # --- 4 bis. file de travail transversale ------------------------------------
 echo "File de travail"
 out=$(flow --args work "match:#77 #111 fix")
@@ -262,7 +302,7 @@ echo "Sessions"
 out=$(flow "match:	alpha	" "match:Legacy audit")
 check "session nommée d'après le dépôt distant" "aikit-acme-alpha" "$(session_of "$out")"
 
-out=$(flow "match:· other" "match:Legacy audit")
+out=$(flow "match:	alpha	other" "match:Legacy audit")
 check "même nom de dossier, autre propriétaire → autre session" "aikit-other-alpha" "$(session_of "$out")"
 
 printf 'aikit-acme-alpha|1\n' > "$sandbox/sessions"
@@ -372,7 +412,7 @@ check "dépôt non détaillé : totaux étage 1, détail inconnu" "7 -1 -1" "$IS
 echo "Chaînes"
 used=$( {
     # les clés littérales : toutes passent par $(t clé) ou T("clé")
-    grep -ohE '\$\(t [a-z][a-z0-9_]*' "$HOME/.local/bin/aikit" \
+    grep -ohE '\$\(t [a-z][a-z0-9_]*' "$AIKIT_BIN" \
          "$SELF_DIR/aikit-status" | sed 's/.*(t //'
     grep -ohE 'T\("[a-z][a-z0-9_]*"' "$SHARE/rows.py" | sed 's/T("//;s/"//' | grep -v '_$'
     # les clés construites à l'exécution
