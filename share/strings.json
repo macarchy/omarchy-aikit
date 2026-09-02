@@ -21,7 +21,7 @@
     "ci_none": "no CI",
     "ci_ok": "CI green",
     "ci_pending": "CI running",
-    "doctor_hint_auto": "auto mode needs a recent Claude Code: claude update",
+    "doctor_hint_flags": "claude --help does not list every flag in AIKIT_CLAUDE_FLAGS (%s): claude update",
     "doctor_hint_gh": "install GitHub CLI, then: gh auth login",
     "doctor_hint_kit": "in Claude Code: /plugin marketplace add phmatray/ai-migration-kit",
     "doctor_hint_kit_old": "%s installed — in Claude Code: /plugin → update ai-migration-kit",
@@ -83,6 +83,8 @@
     "skill_audit_d": "costed effort, risks, recommended target (read-only)",
     "skill_autodev": "Auto-dev (fleet)",
     "skill_autodev_d": "N agents in parallel: issue → PR → merge · %s eligible issues",
+    "skill_claude": "Open Claude",
+    "skill_claude_d": "a free session, no skill, in a fresh git worktree of this repository",
     "skill_create": "Create an issue",
     "skill_create_d": "brainstorm → spec → implementation plan",
     "skill_followups": "Open follow-ups",
@@ -114,7 +116,11 @@
     "sort_stars": "stars",
     "stale": "synced %s ago",
     "stall_body": "No activity for %s min. Right-click 󱓞 to take over.",
-    "stall_title": "An agent is waiting for you — %s"
+    "stall_title": "An agent is waiting for you — %s",
+    "trust_prompt": "Claude Code does not trust %s yet — no worktree until it does",
+    "trust_title": "Claude (trust first)",
+    "trust_yes": "Open Claude in the checkout, once",
+    "trust_yes_d": "Claude records its trust during that session; the next one opens in a fresh worktree"
   },
   "fr": {
     "agents_eligible": " (%s issues éligibles)",
@@ -138,7 +144,7 @@
     "ci_none": "sans CI",
     "ci_ok": "CI verte",
     "ci_pending": "CI en cours",
-    "doctor_hint_auto": "le mode auto exige un Claude Code récent : claude update",
+    "doctor_hint_flags": "claude --help ne connaît pas tous les flags d'AIKIT_CLAUDE_FLAGS (%s) : claude update",
     "doctor_hint_gh": "installe GitHub CLI, puis : gh auth login",
     "doctor_hint_kit": "dans Claude Code : /plugin marketplace add phmatray/ai-migration-kit",
     "doctor_hint_kit_old": "%s installé — dans Claude Code : /plugin → mettre à jour ai-migration-kit",
@@ -200,6 +206,8 @@
     "skill_audit_d": "effort chiffré, risques, cible recommandée (lecture seule)",
     "skill_autodev": "Auto-dev (flotte)",
     "skill_autodev_d": "N agents en parallèle : issue → PR → merge · %s issues éligibles",
+    "skill_claude": "Ouvrir Claude",
+    "skill_claude_d": "session libre, sans skill, dans un worktree git neuf de ce dépôt",
     "skill_create": "Créer une issue",
     "skill_create_d": "brainstorm → spec → plan d'implémentation",
     "skill_followups": "Suivis ouverts",
@@ -231,6 +239,10 @@
     "sort_stars": "étoiles",
     "stale": "synchro %s",
     "stall_body": "Aucune activité depuis %s min. Clic droit sur 󱓞 pour reprendre la main.",
-    "stall_title": "Un agent t'attend — %s"
+    "stall_title": "Un agent t'attend — %s",
+    "trust_prompt": "Claude Code ne fait pas encore confiance à %s — pas de worktree avant",
+    "trust_title": "Claude (confiance d'abord)",
+    "trust_yes": "Ouvrir Claude dans le checkout, une fois",
+    "trust_yes_d": "Claude note sa confiance pendant cette session ; la suivante s'ouvre dans un worktree neuf"
   }
 }
