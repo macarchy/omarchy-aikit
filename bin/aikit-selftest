@@ -433,6 +433,15 @@ PY
   check "aucune clé manquante en $lang" "" "$missing"
 done
 
+# --- sante : ce qui doit faire echouer la synchro, et ce qui ne le doit pas ---
+# Depuis que macarchy notifie les unites en echec au login, un « echec » qui se
+# reproduit a chaque passage devient une alerte quotidienne sur un fait qui ne
+# changera pas (les issues desactivees sur un depot), et une alarme quotidienne
+# finit coupee. On verifie donc les deux sens : une vraie panne gh doit encore
+# faire echouer la synchro.
+verdict=$(python3 tests/gh_failure_classes.py)
+check "une vraie panne gh reste une panne, les issues desactivees non" "panne ignore" "$verdict"
+
 # --- verdict ----------------------------------------------------------------
 echo
 if ((FAIL)); then
