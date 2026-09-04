@@ -11,17 +11,31 @@ the repository root:
 
 ## What was already checked
 
+* `makepkg --printsrcinfo` succeeds and matches the committed `.SRCINFO`.
 * `makepkg -f --nodeps` builds cleanly on aarch64 Arch: `pkgver()` resolved to
   `0.1.0.r11.gd092f81` from the `v0.1.0` tag, `check()` ran `bin/aikit-selftest`
   (60 checks passed), and `package()` produced
-  `aikit-git-0.1.0.r11.gd092f81-1-any.pkg.tar.xz` containing exactly what
-  `install.sh` installs — the four `bin/` commands, the three `share/`
-  resources, `omarchy/merge-config.py` and its two fragments, and the two
-  systemd user units.
+  `aikit-git-0.1.0.r11.gd092f81-1-any.pkg.tar.xz`.
+* `pkgver()` was exercised on a tagless clone too: it falls back to
+  `0.r<count>.g<sha>` instead of returning an empty version.
 * `--nodeps` was needed only because `github-cli` is not installed on the build
   machine (`gh` comes from mise here). The dependency itself is correct.
 * `namcap` is **not installed** on this machine, so the package was never linted.
   Run `namcap PKGBUILD` and `namcap aikit-git-*.pkg.tar.*` before the first push.
+
+### What the package ships, next to `install.sh`
+
+The same programs and units, at system scope: the four `bin/` commands under
+`/usr/bin`, the three `share/` resources plus `omarchy/merge-config.py` and its
+two fragments under `/usr/share/aikit`, and the two systemd user units under
+`/usr/lib/systemd/user`. It is **not** a byte-for-byte match with `install.sh`:
+
+| | `install.sh` | `aikit-git` |
+|---|---|---|
+| `LICENSE`, `README.md` | not copied | `/usr/share/licenses/…`, `/usr/share/doc/…` |
+| `~/.config/omarchy/bar/scripts/aikit-status` | symlinked | not created — `aikit setup` resolves `aikit-status` from `PATH` |
+| `aikit-sync.timer` | enabled and started | shipped only; `systemctl --user enable --now aikit-sync.timer` is yours |
+| Omarchy menu/bar entries | merged by `install.sh` | run `aikit setup` after installing |
 
 ## The remaining steps — yours to run
 
@@ -63,8 +77,8 @@ They need your own AUR account and SSH key; nothing here can do them for you.
    git push origin master        # the AUR branch is master, not main
    ```
 
-6. **Then update the README.** The Installation section still says an AUR package
-   is *pending*; replace it with `yay -S aikit-git` once the push succeeds.
+6. **Then update the README.** The Installation section still says nothing has
+   been pushed; replace it with `yay -S aikit-git` once the push succeeds.
 
 ## Keeping the two copies in sync
 

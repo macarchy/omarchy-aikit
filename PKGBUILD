@@ -23,10 +23,15 @@ sha256sums=('SKIP')
 pkgver() {
   cd "$srcdir/$_pkgname"
   # Depuis la dernière étiquette (v0.1.0 → 0.1.0.r12.gabcdef1) ; sans étiquette,
-  # on retombe sur le seul compte de commits.
-  git describe --long --tags --abbrev=7 2>/dev/null |
-    sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' ||
+  # on retombe sur le seul compte de commits. On affecte avant de tester : le
+  # code de retour d'un « | » est celui de sed, jamais celui de git describe.
+  local described
+  described=$(git describe --long --tags --abbrev=7 2>/dev/null)
+  if [[ -n $described ]]; then
+    printf '%s' "$described" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+  else
     printf '0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+  fi
 }
 
 check() {

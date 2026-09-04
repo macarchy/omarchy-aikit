@@ -53,8 +53,11 @@ def merge_menu():
 def resolve(text):
     """Remplace les jetons par les chemins réellement installés."""
     binary = shutil.which("aikit") or str(HOME / ".local/bin/aikit")
-    script = HOME / ".config/omarchy/bar/scripts/aikit-status"
-    return text.replace("@AIKIT_BIN@", binary).replace("@AIKIT_BAR_SCRIPT@", str(script))
+    # install.sh pose ce lien ; une installation par paquet (aikit-git) ne le
+    # pose pas — on prend alors le aikit-status du PATH (/usr/bin/aikit-status).
+    bar = HOME / ".config/omarchy/bar/scripts/aikit-status"
+    script = str(bar) if bar.exists() else (shutil.which("aikit-status") or str(bar))
+    return text.replace("@AIKIT_BIN@", binary).replace("@AIKIT_BAR_SCRIPT@", script)
 
 
 PLUGIN_ID = "atypical.aikit"

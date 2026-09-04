@@ -79,8 +79,10 @@ then marked *finished* and no longer counts as work in flight.
 omarchy plugin add https://github.com/macarchy/omarchy-aikit.git --enable
 ```
 
-**CLI and sync service** — from source for now; the `aikit-git` AUR package is
-built and validated but [not yet pushed](docs/aur.md):
+**CLI and sync service** — from source for now. The `aikit-git` PKGBUILD is
+written and builds here (`makepkg --printsrcinfo` and a full `makepkg` run both
+succeed), but it has not been linted with `namcap` and nothing has been pushed to
+the AUR; both remain [manual steps for the maintainer](docs/aur.md):
 
 ```bash
 git clone https://github.com/macarchy/omarchy-aikit && cd omarchy-aikit
