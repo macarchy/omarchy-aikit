@@ -1,6 +1,6 @@
 [Unit]
 Description=Synchronise la base locale GitHub d'AI Kit
-Documentation=https://github.com/Atypical-Consulting/omarchy-aikit
+Documentation=https://github.com/macarchy/omarchy-aikit
 After=graphical-session.target
 
 [Service]

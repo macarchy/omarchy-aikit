@@ -1,6 +1,6 @@
 # AI Kit
 
-[![ci](https://github.com/Atypical-Consulting/omarchy-aikit/actions/workflows/ci.yml/badge.svg)](https://github.com/Atypical-Consulting/omarchy-aikit/actions/workflows/ci.yml)
+[![ci](https://github.com/macarchy/omarchy-aikit/actions/workflows/ci.yml/badge.svg)](https://github.com/macarchy/omarchy-aikit/actions/workflows/ci.yml)
 [![Omarchy plugin](https://img.shields.io/badge/omarchy-plugin-7aa2f7)](https://omarchyplugins.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -65,7 +65,7 @@ skill menu to the repository picker — instead of cancelling everything. From t
 repository picker, `Escape` closes.
 
 One session per launch: two repositories with the same folder name under
-different owners (`phmatray/.github` and `Atypical-Consulting/.github`) get
+different owners (`phmatray/.github` and `macarchy/.github`) get
 distinct sessions, and re-running a skill on a repository that already has one
 starts a fresh session rather than silently re-attaching to the previous one.
 Once Claude exits, the pane stays open so the output is readable: the session is
@@ -76,14 +76,14 @@ then marked *finished* and no longer counts as work in flight.
 **Bar widget** (Omarchy Quattro):
 
 ```bash
-omarchy plugin add https://github.com/Atypical-Consulting/omarchy-aikit.git --enable
+omarchy plugin add https://github.com/macarchy/omarchy-aikit.git --enable
 ```
 
-**CLI and sync service** — from source for now, an AUR package (`aikit-git`) is
-pending:
+**CLI and sync service** — from source for now; the `aikit-git` AUR package is
+built and validated but [not yet pushed](docs/aur.md):
 
 ```bash
-git clone https://github.com/Atypical-Consulting/omarchy-aikit && cd omarchy-aikit
+git clone https://github.com/macarchy/omarchy-aikit && cd omarchy-aikit
 ./install.sh                       # symlinks, systemd timer, Omarchy entries
 aikit doctor                       # prerequisites, one by one
 aikit-selftest                     # 60 checks, no network, no windows
