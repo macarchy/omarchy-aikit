@@ -90,7 +90,14 @@ jobs:
           sed -i "s/^pkgver=.*/pkgver=${TAG#v}/" PKGBUILD
           grep -q "^pkgver=${TAG#v}$" PKGBUILD
           useradd -m build && chown -R build:build .
-          su build -c 'makepkg -f --nodeps --noconfirm'
+          # --nocheck, unlike the other repos' copies of this job: this
+          # PKGBUILD's check() runs bin/aikit-selftest, which needs tmux, sqlite,
+          # gh and a real session. In a build container 40 of its 61 checks fail
+          # for want of an environment, not for want of correctness. The selftest
+          # is not skipped -- it is a job of its own in ci.yml, and it has to be
+          # green before anything reaches main. Running it twice, the second time
+          # somewhere it cannot work, only ever produces a false red.
+          su build -c 'makepkg -f --nodeps --nocheck --noconfirm'
           ls -l ./*.pkg.tar.*
 
       - name: Attach it to the release
