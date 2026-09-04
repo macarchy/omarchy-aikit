@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/macarchy/omarchy-aikit/compare/v0.3.0...v0.3.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **sync:** un dépôt sans issues n'est pas une panne de synchro ([#9](https://github.com/macarchy/omarchy-aikit/issues/9)) ([a215411](https://github.com/macarchy/omarchy-aikit/commit/a215411ccddc5a0ed8b0b7e63c9ec95e05eb088e))
+
 ## [0.3.0](https://github.com/macarchy/omarchy-aikit/compare/v0.2.0...v0.3.0) (2026-09-04)
 
 
