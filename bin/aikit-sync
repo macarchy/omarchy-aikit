@@ -78,6 +78,14 @@ def db():
 
 LAST_ERROR = ""      # dernière panne rencontrée pendant ce passage
 
+# Un dépôt dont les issues sont désactivées n'est pas une panne : c'est un
+# réglage délibéré de son propriétaire, et il ne changera pas au prochain
+# passage. Le retenir dans LAST_ERROR faisait échouer l'unité à CHAQUE tour,
+# donc — depuis que macarchy notifie les unités en échec au login — une alerte
+# quotidienne sur un fait immuable. Une alarme qui crie au loup tous les jours
+# finit coupée, et c'est la synchro vraiment cassée qu'on ne verra plus.
+NOT_A_FAILURE = ("has disabled issues", "has issues disabled")
+
 
 def gh(args, timeout=120):
     """Appelle gh et renvoie du JSON, ou None si l'appel échoue. Toute panne
@@ -93,7 +101,9 @@ def gh(args, timeout=120):
         LAST_ERROR = "gh %s: délai dépassé" % args[0]
         return None
     if out.returncode != 0:
-        LAST_ERROR = (out.stderr or "gh %s: code %d" % (args[0], out.returncode)).strip().splitlines()[-1][:200]
+        msg = (out.stderr or "gh %s: code %d" % (args[0], out.returncode)).strip().splitlines()[-1][:200]
+        if not any(m in msg for m in NOT_A_FAILURE):
+            LAST_ERROR = msg
         return None
     try:
         return json.loads(out.stdout or "null")
