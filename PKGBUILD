@@ -1,7 +1,9 @@
 # Maintainer: Philippe Matray <phmatray@gmail.com>
-pkgname=aikit-git
+pkgname=aikit
 _pkgname=aikit
-pkgver=0.1.0.r11.gd092f81
+# Rewritten from the tag by the packaging job before makepkg runs. This value is
+# the fallback for a manual makepkg from a checkout.
+pkgver=0.3.1
 pkgrel=1
 install=aikit.install
 pkgdesc="Desktop launcher for the AI Migration Kit skills, backed by a local GitHub mirror"
@@ -14,34 +16,22 @@ optdepends=(
   'omarchy: menu entries, bar widget and the menu picker (omarchy-menu-select)'
   'libnotify: desktop notification when a session finishes'
 )
-makedepends=('git')
-provides=("$_pkgname=$pkgver")
-conflicts=("$_pkgname")
-source=("$_pkgname::git+https://github.com/macarchy/omarchy-aikit.git")
+# Was aikit-git, built from HEAD with a pkgver() running `git describe`. It is a
+# release package now: the source is the tag's tarball, so the artifact attached
+# to a release matches that release. The -git variant is retired, not kept beside
+# this one -- two packages for one program is how they drift.
+conflicts=("$_pkgname-git")   # retiring the VCS variant, not living beside it
+source=("$_pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
-pkgver() {
-  cd "$srcdir/$_pkgname"
-  # Depuis la dernière étiquette (v0.1.0 → 0.1.0.r12.gabcdef1) ; sans étiquette,
-  # on retombe sur le seul compte de commits. On affecte avant de tester : le
-  # code de retour d'un « | » est celui de sed, jamais celui de git describe.
-  local described
-  described=$(git describe --long --tags --abbrev=7 2>/dev/null)
-  if [[ -n $described ]]; then
-    printf '%s' "$described" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
-  else
-    printf '0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
-  fi
-}
-
 check() {
-  cd "$srcdir/$_pkgname"
+  cd "$srcdir/omarchy-aikit-$pkgver"
   # La suite tourne sur un bac à sable bouchonné : ni réseau, ni fenêtre.
   ./bin/aikit-selftest
 }
 
 package() {
-  cd "$srcdir/$_pkgname"
+  cd "$srcdir/omarchy-aikit-$pkgver"
 
   # Les mêmes fichiers que ./install.sh, mais à l'échelle du système.
   for bin in aikit aikit-status aikit-sync aikit-selftest; do
