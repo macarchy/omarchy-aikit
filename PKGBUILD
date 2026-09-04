@@ -1,27 +1,37 @@
 # Maintainer: Philippe Matray <phmatray@gmail.com>
 pkgname=aikit-git
 _pkgname=aikit
-pkgver=0.1.0.r0.0000000
+pkgver=0.1.0.r11.gd092f81
 pkgrel=1
 install=aikit.install
 pkgdesc="Desktop launcher for the AI Migration Kit skills, backed by a local GitHub mirror"
 arch=('any')
-url="https://github.com/Atypical-Consulting/omarchy-aikit"
+url="https://github.com/macarchy/omarchy-aikit"
 license=('MIT')
-depends=('bash' 'git' 'jq' 'python' 'sqlite' 'tmux' 'github-cli')
+# Ce que « aikit doctor » exige : tmux, jq, python3, sqlite3, git, gh.
+depends=('bash' 'git' 'github-cli' 'jq' 'python' 'sqlite' 'tmux')
 optdepends=(
-  'omarchy: menu entries and bar widget'
-  'omarchy-aikit: Quickshell bar widget for Omarchy'
+  'omarchy: menu entries, bar widget and the menu picker (omarchy-menu-select)'
+  'libnotify: desktop notification when a session finishes'
 )
 makedepends=('git')
-provides=("$_pkgname")
+provides=("$_pkgname=$pkgver")
 conflicts=("$_pkgname")
-source=("$_pkgname::git+https://github.com/Atypical-Consulting/omarchy-aikit.git")
+source=("$_pkgname::git+https://github.com/macarchy/omarchy-aikit.git")
 sha256sums=('SKIP')
 
 pkgver() {
   cd "$srcdir/$_pkgname"
-  printf '0.1.0.r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  # Depuis la dernière étiquette (v0.1.0 → 0.1.0.r12.gabcdef1) ; sans étiquette,
+  # on retombe sur le seul compte de commits. On affecte avant de tester : le
+  # code de retour d'un « | » est celui de sed, jamais celui de git describe.
+  local described
+  described=$(git describe --long --tags --abbrev=7 2>/dev/null)
+  if [[ -n $described ]]; then
+    printf '%s' "$described" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+  else
+    printf '0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+  fi
 }
 
 check() {
@@ -33,6 +43,7 @@ check() {
 package() {
   cd "$srcdir/$_pkgname"
 
+  # Les mêmes fichiers que ./install.sh, mais à l'échelle du système.
   for bin in aikit aikit-status aikit-sync aikit-selftest; do
     install -Dm755 "bin/$bin" "$pkgdir/usr/bin/$bin"
   done

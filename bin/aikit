@@ -122,7 +122,7 @@ die() { notify "$1" "${2-}"; echo "aikit: $1 ${2-}" >&2; exit 1; }
 slugify() { tr '[:upper:]' '[:lower:]' <<<"$1" | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//'; }
 
 # Nom de session : deux dépôts peuvent porter le même nom de dossier chez des
-# propriétaires différents (phmatray/.github et Atypical-Consulting/.github).
+# propriétaires différents (phmatray/.github et macarchy/.github).
 # Le nom de session doit donc venir du dépôt distant, ou à défaut du chemin.
 session_base() { # session_base <chemin> <nwo>
   if [[ -n ${2-} ]]; then

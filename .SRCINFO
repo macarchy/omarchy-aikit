@@ -1,0 +1,24 @@
+pkgbase = aikit-git
+	pkgdesc = Desktop launcher for the AI Migration Kit skills, backed by a local GitHub mirror
+	pkgver = 0.1.0.r11.gd092f81
+	pkgrel = 1
+	url = https://github.com/macarchy/omarchy-aikit
+	install = aikit.install
+	arch = any
+	license = MIT
+	makedepends = git
+	depends = bash
+	depends = git
+	depends = github-cli
+	depends = jq
+	depends = python
+	depends = sqlite
+	depends = tmux
+	optdepends = omarchy: menu entries, bar widget and the menu picker (omarchy-menu-select)
+	optdepends = libnotify: desktop notification when a session finishes
+	provides = aikit=0.1.0.r11.gd092f81
+	conflicts = aikit
+	source = aikit::git+https://github.com/macarchy/omarchy-aikit.git
+	sha256sums = SKIP
+
+pkgname = aikit-git
