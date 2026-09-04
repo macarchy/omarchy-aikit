@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/macarchy/omarchy-aikit/compare/v0.3.1...v0.4.0) (2026-09-04)
+
+
+### Features
+
+* **pkg:** publish a tag-based package instead of the -git PKGBUILD ([#11](https://github.com/macarchy/omarchy-aikit/issues/11)) ([6334390](https://github.com/macarchy/omarchy-aikit/commit/633439071cf260d49bbd7ce1d1fc10d4d199b855))
+
 ## [0.3.1](https://github.com/macarchy/omarchy-aikit/compare/v0.3.0...v0.3.1) (2026-09-04)
 
 
