@@ -35,6 +35,12 @@ check "and the rewrite is verified"       grep -q 'grep -q "\^pkgver=\${TAG#v}\$
 check "extra-files is not used"           bash -c '! grep -q "extra-files" release-please-config.json'
 check "the upload globs"                  grep -q '\*.pkg.tar.\*' "$WF"
 check "gh is installed in the container"  grep -q 'github-cli' "$WF"
+# check() runs the selftest, which needs tmux/sqlite/gh and a session; in a build
+# container it fails for want of an environment. ci.yml runs it properly and has
+# to be green before main -- running it twice, the second time somewhere it
+# cannot work, only ever produces a false red.
+check "the build skips check() in CI"     grep -q -- '--nocheck' "$WF"
+check "but the selftest is still a gate"  grep -q 'aikit-selftest' .github/workflows/ci.yml
 
 (( fails == 0 )) && echo "all ok" || echo "$fails failed"
 exit $(( fails > 0 ))
