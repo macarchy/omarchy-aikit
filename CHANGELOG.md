@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/macarchy/omarchy-aikit/compare/v0.4.0...v0.4.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **ci:** build the package without re-running the selftest ([#13](https://github.com/macarchy/omarchy-aikit/issues/13)) ([f21feab](https://github.com/macarchy/omarchy-aikit/commit/f21feab28a0b85dbf447471eccb5d31b28756a69))
+
 ## [0.4.0](https://github.com/macarchy/omarchy-aikit/compare/v0.3.1...v0.4.0) (2026-09-04)
 
 
